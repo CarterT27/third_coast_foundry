@@ -8,7 +8,7 @@ vi.mock("../src/worker/lib/nvidia", () => ({ chat: vi.fn() }));
 
 beforeEach(() => vi.resetAllMocks());
 
-describe.skip("extractContext", () => {
+describe("extractContext", () => {
   it("makes one LLM call that includes the document text and returns trimmed text", async () => {
     vi.mocked(chat).mockResolvedValue("  Economics major at UChicago.  ");
     const note = await extractContext(env, "resume", "RESUME_TEXT_123");
