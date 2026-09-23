@@ -13,7 +13,7 @@ import {
 } from "../../shared/schemas";
 import { readSSE } from "../../shared/sse";
 import type { AppType } from "../../worker/index";
-import { fixtureMentors, fixtureState } from "./fixtures";
+import { fixtureInterviewReplies, fixtureMentors, fixtureState } from "./fixtures";
 import { getAccessToken } from "./supabase";
 
 const USE_FIXTURES = import.meta.env.PUBLIC_USE_FIXTURES === "true";
@@ -48,8 +48,15 @@ export async function uploadDocument(body: UploadDocumentBody): Promise<Document
 /** Sends the conversation so far; calls onToken for each chunk of the interviewer's reply. */
 export async function sendInterviewMessage(messages: ChatMessage[], onToken: (text: string) => void): Promise<void> {
   if (USE_FIXTURES) {
-    const reply = "Thanks! What industries are you most excited about?";
-    for (const word of reply.split(/(?= )/)) onToken(word);
+    // Type "error" to test the failure state.
+    if (messages.at(-1)?.content.toLowerCase().includes("error")) throw new Error("Fixture error: the interviewer is unavailable.");
+    const turn = messages.filter((m) => m.role === "assistant").length;
+    const reply = fixtureInterviewReplies[turn === 0 ? 0 : 1 + ((turn - 1) % (fixtureInterviewReplies.length - 1))];
+    await new Promise((resolve) => setTimeout(resolve, 400));
+    for (const word of reply.split(/(?= )/)) {
+      onToken(word);
+      await new Promise((resolve) => setTimeout(resolve, 40));
+    }
     fixtureState.interview.messages = [...messages, { role: "assistant", content: reply }];
     return;
   }
