@@ -26,8 +26,10 @@ npm run dev            # page + API on http://localhost:5173
 All config lives in `.env`. Only `PUBLIC_*` values reach the browser. Don't create a
 `.dev.vars` file — Wrangler would read it instead of `.env`.
 
-**Deploy:** set the Worker's values once with `npx wrangler secret put <NAME>` (every key
-in `.env.example` except `PUBLIC_USE_FIXTURES`), then `npm run deploy`.
+**Deploy:** `npx wrangler login` once, then `npm run deploy`. It builds the page with the
+`PUBLIC_*` values from `.env` and uploads every `.env` value as a Worker secret in the same
+step. Removing a key from `.env` doesn't delete it from Cloudflare; use
+`npx wrangler secret delete <NAME>` for that.
 
 ## How it works
 
