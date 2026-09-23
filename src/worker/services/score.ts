@@ -1,4 +1,4 @@
-// OWNER: high-experience teammate
+// OWNER: Carter
 // Implement the function body. Do not change the signature.
 import type { Candidate, Score } from "../../shared/schemas";
 import type { Env } from "../env";

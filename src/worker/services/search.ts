@@ -1,4 +1,4 @@
-// OWNER: medium-experience teammate
+// OWNER: Tigo
 // Implement the function bodies. Do not change the signatures.
 // Suggested order: buildXray → parseResult → runSearch → generateQueries (tests cover all four).
 import type { Candidate, XraySpec } from "../../shared/schemas";

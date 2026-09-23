@@ -1,4 +1,4 @@
-// OWNER: medium-experience teammate
+// OWNER: Tigo
 // Implement the function body. Do not change the signature.
 import type { Blurb, Mentor } from "../../shared/schemas";
 import type { Env } from "../env";

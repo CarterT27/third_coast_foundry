@@ -1,4 +1,4 @@
-// OWNER: low-experience teammate. Remove `.skip` as you implement.
+// OWNER: Ania. Remove `.skip` as you implement.
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { chat } from "../src/worker/lib/nvidia";
 import { extractContext } from "../src/worker/services/documents";

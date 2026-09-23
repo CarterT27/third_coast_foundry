@@ -1,4 +1,4 @@
-// OWNER: medium-experience teammate. Remove `.skip` from each describe as you implement.
+// OWNER: Tigo. Remove `.skip` from each describe as you implement.
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { MAX_QUERIES } from "../src/shared/schemas";
 import { chatJSON } from "../src/worker/lib/nvidia";

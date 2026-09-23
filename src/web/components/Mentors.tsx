@@ -1,4 +1,4 @@
-// OWNER: low-experience teammate
+// OWNER: Ania
 // Build the results step. Do not change the Props type.
 import type { Mentor } from "../../shared/schemas";
 import { MentorCard } from "./MentorCard";

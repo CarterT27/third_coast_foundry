@@ -1,4 +1,4 @@
-// OWNER: high-experience teammate. Remove `.skip` as you implement.
+// OWNER: Carter. Remove `.skip` as you implement.
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { chat, chatStream } from "../src/worker/lib/nvidia";
 import { nextTurn, summarize } from "../src/worker/services/interview";

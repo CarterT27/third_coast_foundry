@@ -79,14 +79,13 @@ Lint rules enforce the boundaries (e.g. services can't import the database or ca
 
 | Who | Files | Notes |
 |---|---|---|
-| Tech lead | everything in `.github/CODEOWNERS` | contracts, infra, reviews |
-| Low experience | `components/Upload.tsx`, `components/Mentors.tsx`, `services/documents.ts` | UI against ready-made API functions; fixtures mode for the results UI |
-| Medium experience | `services/search.ts`, `services/blurbs.ts` | start with `buildXray` / `parseResult` (pure functions, tests ready) |
-| High experience | `components/Interview.tsx`, `services/interview.ts`, `services/score.ts` | streaming both ends, cross-batch score calibration; first reviewer for the others |
+| Ania | `components/Upload.tsx`, `components/Mentors.tsx`, `services/documents.ts` | UI against ready-made API functions; fixtures mode for the results UI |
+| Tigo | `services/search.ts`, `services/blurbs.ts` | start with `buildXray` / `parseResult` (pure functions, tests ready) |
+| Carter | `components/Interview.tsx`, `services/interview.ts`, `services/score.ts`, plus the architecture files (the "must not edit" list in `AGENTS.md`) | streaming both ends, cross-batch score calibration; contracts, infra, reviews |
 
 ## Workflow
 
 1. Branch from `main`.
 2. Remove `.skip` from the tests for what you're implementing; make them pass.
 3. `npm run check` (typecheck + lint + tests) must pass — CI runs it too.
-4. Open a PR; changes to architecture files need the tech lead's approval.
+4. Open a PR for Carter to review. Changes to architecture files need Carter's sign-off.
