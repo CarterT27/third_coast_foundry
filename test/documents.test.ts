@@ -24,4 +24,14 @@ describe("extractContext", () => {
     expect(system.role).toBe("system");
     expect(system.content).toContain("Advanced coursework:");
   });
+
+  it("asks for fixed labeled lines per kind and no contact details", async () => {
+    vi.mocked(chat).mockResolvedValue("Headline: Analyst.");
+    await extractContext(env, "linkedin", "LINKEDIN_TEXT");
+    const [system] = vi.mocked(chat).mock.calls[0][1];
+    expect(system.content).toContain("Headline:");
+    expect(system.content).toContain("Volunteering & groups:");
+    expect(system.content).not.toContain("GPA:");
+    expect(system.content).toMatch(/leave out phone numbers, email addresses/i);
+  });
 });
