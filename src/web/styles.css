@@ -1,0 +1,195 @@
+:root {
+  --bg: #f7f7f5;
+  --surface: #ffffff;
+  --text: #1c1c1a;
+  --muted: #6b6b66;
+  --border: #e3e3de;
+  --accent: #2f5bea;
+  --accent-text: #ffffff;
+  --danger: #c0392b;
+  --radius: 12px;
+  font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  color: var(--text);
+  background: var(--bg);
+  line-height: 1.5;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+}
+
+/* Base UI renders popups in portals; isolate the app's stacking context. */
+#root {
+  isolation: isolate;
+}
+
+.app {
+  max-width: 760px;
+  margin: 0 auto;
+  padding: 48px 20px 120px;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.app__header h1 {
+  margin: 0 0 4px;
+  font-size: 1.8rem;
+}
+
+.muted {
+  color: var(--muted);
+  margin: 0;
+}
+
+.error {
+  color: var(--danger);
+  margin: 0;
+}
+
+.stack {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.grid {
+  display: grid;
+  gap: 12px;
+}
+
+/* ─── Steps ─────────────────────────────────────────── */
+.step {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 20px 24px;
+  scroll-margin-top: 24px;
+  transition: opacity 0.2s;
+}
+
+.step--locked,
+.step--done {
+  opacity: 0.55;
+}
+
+.step--done:has(.step__body[data-open]) {
+  opacity: 1;
+}
+
+.step__header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.step__title {
+  margin: 0;
+  font-size: 1.1rem;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.step__number {
+  display: inline-grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  background: var(--border);
+  font-size: 0.85rem;
+}
+
+.step--active .step__number {
+  background: var(--accent);
+  color: var(--accent-text);
+}
+
+.step__summary {
+  color: var(--muted);
+  font-size: 0.9rem;
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.step__body {
+  margin-top: 16px;
+}
+
+/* ─── Buttons ───────────────────────────────────────── */
+.button {
+  align-self: flex-start;
+  border: none;
+  border-radius: 8px;
+  padding: 8px 16px;
+  background: var(--accent);
+  color: var(--accent-text);
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.button:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.button--ghost {
+  margin-left: auto;
+  background: transparent;
+  color: var(--accent);
+}
+
+/* ─── Mentor cards ──────────────────────────────────── */
+.card {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 16px 18px;
+  background: var(--surface);
+}
+
+.card__header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 12px;
+}
+
+.card__name {
+  font-weight: 600;
+  color: var(--accent);
+  text-decoration: none;
+}
+
+.card__name:hover {
+  text-decoration: underline;
+}
+
+.card__headline {
+  margin: 2px 0 0;
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+.card__blurb {
+  margin: 12px 0 0;
+}
+
+.badge {
+  flex-shrink: 0;
+  min-width: 40px;
+  text-align: center;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: #e8eefd;
+  color: var(--accent);
+  font-weight: 600;
+  font-size: 0.85rem;
+}

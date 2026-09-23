@@ -1,0 +1,24 @@
+# Architecture files: changes need the tech lead's review.
+# Everything not listed here (services, Upload/Interview/Mentors, styles, tests) is open to the team.
+/src/shared/                    @CarterT27
+/src/worker/index.ts            @CarterT27
+/src/worker/pipeline.ts         @CarterT27
+/src/worker/env.ts              @CarterT27
+/src/worker/lib/                @CarterT27
+/src/web/lib/                   @CarterT27
+/src/web/App.tsx                @CarterT27
+/src/web/main.tsx               @CarterT27
+/src/web/components/Step.tsx    @CarterT27
+/supabase/                      @CarterT27
+/.github/                       @CarterT27
+/AGENTS.md                      @CarterT27
+/CLAUDE.md                      @CarterT27
+/package.json                   @CarterT27
+/package-lock.json              @CarterT27
+/wrangler.jsonc                 @CarterT27
+/vite.config.ts                 @CarterT27
+/vitest.config.ts               @CarterT27
+/eslint.config.js               @CarterT27
+/tsconfig*.json                 @CarterT27
+/index.html                     @CarterT27
+/.env.example                   @CarterT27

@@ -1,0 +1,12 @@
+node_modules/
+dist/
+.wrangler/
+*.tsbuildinfo
+.DS_Store
+
+# All config lives in .env (see .env.example). .dev.vars is ignored so nobody
+# creates one by accident — Wrangler would load it instead of .env.
+.env
+.env.*
+!.env.example
+.dev.vars*
