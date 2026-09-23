@@ -81,11 +81,15 @@ Lint rules enforce the boundaries (e.g. services can't import the database or ca
 |---|---|---|
 | Ania | `components/Upload.tsx`, `components/Mentors.tsx`, `services/documents.ts` | UI against ready-made API functions; fixtures mode for the results UI |
 | Tigo | `services/search.ts`, `services/blurbs.ts` | start with `buildXray` / `parseResult` (pure functions, tests ready) |
-| Carter | `components/Interview.tsx`, `services/interview.ts`, `services/score.ts`, plus the architecture files (the "must not edit" list in `AGENTS.md`) | streaming both ends, cross-batch score calibration; contracts, infra, reviews |
+| Carter | `components/Interview.tsx`, `services/interview.ts`, `services/score.ts`, plus the architecture files (the "must not edit" list in `AGENTS.md`) | streaming both ends, cross-batch score calibration; contracts, infra |
 
 ## Workflow
 
-1. Branch from `main`.
+Everyone pushes straight to `main`.
+
+1. `git pull` before you start.
 2. Remove `.skip` from the tests for what you're implementing; make them pass.
-3. `npm run check` (typecheck + lint + tests) must pass — CI runs it too.
-4. Open a PR for Carter to review. Changes to architecture files need Carter's sign-off.
+3. Run `npm run check` (typecheck + lint + tests) before every push.
+4. Push. CI runs the same checks on every push; if it goes red, fix it right away since
+   everyone is working off `main`.
+5. Changes to architecture files (the "must not edit" list in `AGENTS.md`): tell Carter first.
