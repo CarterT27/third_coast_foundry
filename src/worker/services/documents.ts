@@ -8,14 +8,18 @@ const FOCUS: Record<UploadKind, string> = {
   resume:
     "This is a resume. Capture education (schools, degrees, majors, graduation year), every job and internship " +
     "(company, title, dates, one line on what they did), technical and professional skills, projects, " +
-    "leadership roles, clubs, awards, and location.",
+    "leadership roles, clubs, awards, and location. If it lists relevant or advanced coursework, include it on an " +
+    '"Advanced coursework:" line with the course names.',
   transcript:
     "This is an academic transcript. Capture the school, degree and major/minor, expected graduation, overall and " +
-    "major GPA if shown, honors, and the standout courses (advanced, specialized, or with top grades). " +
-    "Group courses by field rather than listing every one.",
+    "major GPA if shown, and honors. " +
+    'Add an "Advanced coursework:" line naming every advanced class by its title (upper-level, graduate-level, ' +
+    "honors, accelerated, or specialized courses), with the grade when shown. " +
+    "Summarize the remaining introductory and general-education courses briefly by field instead of listing each one.",
   linkedin:
     "This is a LinkedIn profile export. Capture the headline, current location, the About summary in brief, every " +
-    "role (company, title, dates), education, skills, certifications, volunteering, and groups or organizations.",
+    "role (company, title, dates), education, skills, certifications, volunteering, and groups or organizations. " +
+    'If it lists courses, include the advanced ones on an "Advanced coursework:" line.',
 };
 
 const SYSTEM = `You write short context notes about a student that are later used to find mentors for coffee chats.

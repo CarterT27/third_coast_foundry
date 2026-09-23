@@ -16,4 +16,12 @@ describe("extractContext", () => {
     expect(JSON.stringify(vi.mocked(chat).mock.calls[0][1])).toContain("RESUME_TEXT_123");
     expect(note).toBe("Economics major at UChicago.");
   });
+
+  it("asks for advanced coursework when the document is a transcript", async () => {
+    vi.mocked(chat).mockResolvedValue("Advanced coursework: Econometrics (A).");
+    await extractContext(env, "transcript", "TRANSCRIPT_TEXT");
+    const [system] = vi.mocked(chat).mock.calls[0][1];
+    expect(system.role).toBe("system");
+    expect(system.content).toContain("Advanced coursework:");
+  });
 });
