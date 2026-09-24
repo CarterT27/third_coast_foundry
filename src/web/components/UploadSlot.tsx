@@ -13,6 +13,16 @@ type Props = {
   onUploaded: () => void;
 };
 
+// pdf.js errors carry a `name` like "PasswordException"; anything else is shown
+// with its message so the cause can be reported (e.g. an unsupported browser).
+function readErrorMessage(err: unknown): string {
+  const name = typeof err === "object" && err !== null && "name" in err ? String(err.name) : "";
+  if (name === "PasswordException") return "This PDF is password-protected. Remove the password and upload it again.";
+  if (name === "InvalidPDFException") return "This file doesn't look like a valid PDF. Try re-exporting it and uploading again.";
+  const detail = err instanceof Error ? err.message : String(err);
+  return `We couldn't read this PDF (${detail}). Try re-exporting it, or use a different browser such as Chrome.`;
+}
+
 export function UploadSlot({ kind, label, hint, document, onUploaded }: Props) {
   const inputId = useId();
   const [busy, setBusy] = useState(false);
@@ -34,8 +44,9 @@ export function UploadSlot({ kind, label, hint, document, onUploaded }: Props) {
       let text: string;
       try {
         text = await extractPdfText(file);
-      } catch {
-        setError("We couldn't read this PDF. Try re-exporting it and uploading again.");
+      } catch (err) {
+        console.error("Could not read PDF", err);
+        setError(readErrorMessage(err));
         return;
       }
       if (!text) {
