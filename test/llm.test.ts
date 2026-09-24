@@ -94,3 +94,29 @@ describe("OpenRouter responses", () => {
     await expect(chat(openrouter, [])).rejects.toThrow("OpenRouter API 401: bad key");
   });
 });
+
+describe("timeouts", () => {
+  const timeout = () => Object.assign(new Error("The operation was aborted due to timeout"), { name: "TimeoutError" });
+
+  it("sends every request with a timeout signal and retries one that times out", async () => {
+    const fn = vi.fn<typeof fetch>().mockRejectedValueOnce(timeout()).mockResolvedValueOnce(completion("hi"));
+    vi.stubGlobal("fetch", fn);
+    await expect(chat(env, [{ role: "user", content: "hey" }])).resolves.toBe("hi");
+    expect(fn).toHaveBeenCalledTimes(2);
+    expect(fn.mock.calls[0][1]?.signal).toBeInstanceOf(AbortSignal);
+  });
+
+  it("gives up with a readable error after every attempt times out", async () => {
+    const fn = vi.fn<typeof fetch>().mockRejectedValue(timeout());
+    vi.stubGlobal("fetch", fn);
+    await expect(chat(env, [{ role: "user", content: "hey" }])).rejects.toThrow("NVIDIA API timed out after 60s");
+    expect(fn).toHaveBeenCalledTimes(3);
+  });
+
+  it("doesn't retry other network errors", async () => {
+    const fn = vi.fn<typeof fetch>().mockRejectedValue(new TypeError("fetch failed"));
+    vi.stubGlobal("fetch", fn);
+    await expect(chat(env, [{ role: "user", content: "hey" }])).rejects.toThrow("fetch failed");
+    expect(fn).toHaveBeenCalledTimes(1);
+  });
+});

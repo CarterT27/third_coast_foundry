@@ -6,6 +6,8 @@ import { readSSE } from "../../shared/sse";
 import type { Env } from "../env";
 
 const MAX_ATTEMPTS = 3;
+/** Per attempt, body included: a host that stalls after accepting would otherwise hang forever. */
+const TIMEOUT_MS = 60_000;
 
 type Provider = {
   name: string;
@@ -131,15 +133,24 @@ function content(env: Env, json: Completion): string {
 async function request(env: Env, body: unknown): Promise<Response> {
   const p = provider(env);
   for (let attempt = 1; ; attempt++) {
-    const res = await fetch(p.url, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${p.key(env)}`,
-        "Content-Type": "application/json",
-        ...p.headers,
-      },
-      body: JSON.stringify(body),
-    });
+    let res: Response;
+    try {
+      res = await fetch(p.url, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${p.key(env)}`,
+          "Content-Type": "application/json",
+          ...p.headers,
+        },
+        body: JSON.stringify(body),
+        signal: AbortSignal.timeout(TIMEOUT_MS),
+      });
+    } catch (err) {
+      // A stalled host: try again right away (OpenRouter may route to another host).
+      if (!(err instanceof Error && err.name === "TimeoutError")) throw err;
+      if (attempt >= MAX_ATTEMPTS) throw new Error(`${p.name} API timed out after ${TIMEOUT_MS / 1000}s`, { cause: err });
+      continue;
+    }
     if (res.ok) return res;
     // Both APIs rate limit; back off and retry on 429 / 5xx.
     const retryable = res.status === 429 || res.status >= 500;
