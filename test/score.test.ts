@@ -94,4 +94,14 @@ describe("scoreBatch", () => {
     await scoreBatch(env, "## RESUME (cv.pdf)\nIntern at Optiver", [candidate("a")]);
     expect(vi.mocked(chatJSON).mock.calls[0][1][0].content).toContain("Stage (up to 10)");
   });
+
+  it("tells the model how to read evidence so job ads, students and bare company names don't score as matches", async () => {
+    vi.mocked(chatJSON).mockResolvedValue({ scores: [] });
+    await scoreBatch(env, "context", [candidate("a")]);
+    const system = vi.mocked(chatJSON).mock.calls[0][1][0].content;
+    expect(system).toMatch(/job ad.*NOT evidence they work there/);
+    expect(system).toMatch(/current student and gets the student cap/);
+    expect(system).toMatch(/only a company name shows the employer but not the role/);
+    expect(system).toMatch(/90 or more needs full points/);
+  });
 });

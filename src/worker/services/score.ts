@@ -72,11 +72,19 @@ async function requestScores(env: Env, context: string, candidates: Candidate[])
 ${rubric || DEFAULT_RUBRIC}
 </rubric>
 
+Reading a profile:
+- Where someone works now comes only from their headline, the "Experience:" field, or a first-person statement ("I joined X", "I'm a research scientist at X"). A job ad, "we're hiring", a reshared or congratulatory post, an event write-up or a list of companies they mention is NOT evidence they work there.
+- A headline that is only a company name shows the employer but not the role. Award role points only if the snippet names their job.
+- Words like "ex-", "previously", "former" and the "Education:" field are past history: use them for shared background, not for their current employer.
+- Anyone still in school is a current student and gets the student cap: an undergraduate, a PhD student ("heading back to my PhD"), or an intern. A graduation year in the past ("MIT '25") alone doesn't make someone a student.
+- Take titles as written. A founder, director or recruiter is not a research engineer unless the profile says so.
+
 How to score:
-- Go through the criteria one by one and award full, about half, or 0 points using only evidence in that person's headline and snippet. If the evidence isn't there, award 0 for that criterion; never assume.
+- Go through the criteria one by one and award full, about half, or 0 points using only that evidence. If the evidence isn't there, award 0 for that criterion; never assume.
 - Add the points up, then apply any cap that matches. The result is a whole number from 0 to 100.
+- A score of 90 or more needs full points on the criteria worth the most AND at least half on every other criterion. Being at the right company alone never reaches 90 when the rubric also rewards role or shared background.
 - Score each person on the rubric alone, never relative to the others in the list.
-- The reason is one sentence citing the evidence from their headline or snippet that earned the most points.
+- The reason is one sentence naming only the criteria this person actually earned points for, quoting the evidence (e.g. "Research Engineer at Google DeepMind; ex-Palantir like the student"). Don't restate the rubric's wording or claim a match the profile doesn't show.
 - Use only facts in the student's information and the profile. Never invent employers, titles or schools.
 - Return exactly one entry per person, using the slug exactly as given.
 
