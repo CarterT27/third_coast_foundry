@@ -28,6 +28,17 @@ describe("nextTurn", () => {
     expect(messages[0].role).toBe("system");
     expect(messages.at(-1)?.role).toBe("user");
   });
+
+  it("tells the model to be brief, ask one question and hide its reasoning", async () => {
+    vi.mocked(chatStream).mockImplementation(async function* () {
+      yield "Which cities?";
+    });
+    await collect(nextTurn(env, "CTX", []));
+    const system = vi.mocked(chatStream).mock.calls[0][1][0].content;
+    expect(system).toContain("Exactly one question");
+    expect(system).toMatch(/under 35 words/);
+    expect(system).toMatch(/Never show your reasoning/);
+  });
 });
 
 describe("summarize", () => {
