@@ -31,6 +31,7 @@ export function Interview({ interview, onChange }: Props) {
   const [draft, setDraft] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [finishing, setFinishing] = useState(false);
+  const [saved, setSaved] = useState(false); // finished and nothing said since
   const viewportRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const opened = useRef(false);
@@ -45,6 +46,7 @@ export function Interview({ interview, onChange }: Props) {
 
   const send = useCallback(async (conversation: ChatMessage[]) => {
     setMessages(conversation);
+    setSaved(false);
     setReply("");
     setError(null);
     let text = "";
@@ -94,14 +96,18 @@ export function Interview({ interview, onChange }: Props) {
     }
   };
 
+  // A first finish collapses the step and unmounts this component, but re-finishing from
+  // "Edit" keeps it open, so always clear the spinner.
   const finish = async () => {
     setFinishing(true);
     setError(null);
     try {
       await finishInterview(messages);
+      setSaved(true);
       onChange();
     } catch (err) {
       setError(errorMessage(err, "Couldn't finish the interview."));
+    } finally {
       setFinishing(false);
     }
   };
@@ -173,13 +179,15 @@ export function Interview({ interview, onChange }: Props) {
 
       <div className="chat__footer">
         <p className="muted">
-          {answers < MIN_ANSWERS_TO_FINISH
-            ? "Answer a few questions, then finish whenever you're ready."
-            : "Finish once you've covered what matters. You can come back and edit later."}
+          {saved
+            ? "Saved. Your next mentor search will use these answers."
+            : answers < MIN_ANSWERS_TO_FINISH
+              ? "Answer a few questions, then finish whenever you're ready."
+              : "Finish once you've covered what matters. You can come back and edit later."}
         </p>
         <Button
           className={`button button--secondary${finishing ? " button--busy" : ""}`}
-          disabled={busy || answers < MIN_ANSWERS_TO_FINISH}
+          disabled={busy || saved || answers < MIN_ANSWERS_TO_FINISH}
           onClick={() => void finish()}
         >
           {finishing && <span className="spinner" />}
