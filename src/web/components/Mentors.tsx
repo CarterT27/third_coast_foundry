@@ -1,57 +1,87 @@
 // OWNER: Ania
 // Build the results step. Do not change the Props type.
-import { useState } from "react";
+import { useEffect, useReducer, useRef, useState } from "react";
 import type { Mentor } from "../../shared/schemas";
 import { findMentors } from "../lib/api";
 import { MentorCard } from "./MentorCard";
+import { SearchBoard, searchReducer } from "./SearchBoard";
+import { useFlip } from "./useFlip";
 
 type Props = {
   mentors: Mentor[]; // already shown, best first
   onChange: () => void; // call after a search finishes to reload page state
 };
 
+/** How long fading chips stay before they're removed and the picks line up. */
+const FADE_MS = 650;
+/** Minimum time the ranked picks stay up, so the animation finishes before the cards arrive. */
+const PICKS_MIN_MS = 1200;
+
 export function Mentors({ mentors, onChange }: Props) {
-  const [progress, setProgress] = useState<string | null>(null);
+  const [run, dispatch] = useReducer(searchReducer, null);
   const [error, setError] = useState<string | null>(null);
   const [exhausted, setExhausted] = useState(false);
-  const busy = progress !== null;
+  const pickedAt = useRef(0);
+  const root = useRef<HTMLDivElement>(null);
+  useFlip(root);
+
+  const busy = run !== null && run.stage !== "done";
+  // Keep the board up after "done" until the page state includes the new mentors.
+  const arrived = run?.picks?.some((p) => mentors.some((m) => m.slug === p.slug)) ?? false;
+  const showBoard = run !== null && !(run.stage === "done" && arrived);
+
+  const leaving = run?.people.some((p) => p.leaving) ?? false;
+  useEffect(() => {
+    if (!leaving) return;
+    const timer = setTimeout(() => dispatch({ type: "prune" }), FADE_MS);
+    return () => clearTimeout(timer);
+  }, [leaving]);
 
   async function search() {
     setError(null);
     setExhausted(false);
-    setProgress("Starting search…");
+    pickedAt.current = 0;
+    dispatch({ type: "start" });
     try {
-      const found = await findMentors(setProgress);
-      if (found.length === 0) setExhausted(true);
+      const found = await findMentors((event) => {
+        if (event.type === "selected") pickedAt.current = Date.now();
+        dispatch(event);
+      });
+      if (found.length === 0) {
+        setExhausted(true);
+        dispatch({ type: "reset" });
+        onChange();
+        return;
+      }
+      const wait = pickedAt.current + FADE_MS + PICKS_MIN_MS - Date.now();
+      if (wait > 0) await new Promise((resolve) => setTimeout(resolve, wait));
+      dispatch({ type: "finish" });
       onChange();
     } catch (err) {
+      dispatch({ type: "reset" });
       setError(err instanceof Error ? err.message : "Something went wrong while finding mentors.");
-    } finally {
-      setProgress(null);
     }
   }
 
   const label = mentors.length === 0 ? "Find mentors" : "Show 10 more";
 
   return (
-    <div className="stack">
-      {mentors.length === 0 && !busy && !error && (
+    <div className="stack mentors" ref={root}>
+      {mentors.length === 0 && !run && !error && (
         <p className="muted">We'll search for people who match your background and goals, then explain why each is worth a chat.</p>
       )}
 
       {mentors.length > 0 && (
         <div className="grid">
           {mentors.map((m) => (
-            <MentorCard key={m.slug} mentor={m} />
+            <div key={m.slug} data-flip={m.slug}>
+              <MentorCard mentor={m} />
+            </div>
           ))}
         </div>
       )}
 
-      {busy && (
-        <p className="progress" role="status">
-          <span className="spinner" aria-hidden="true" /> {progress}
-        </p>
-      )}
+      {run && showBoard && <SearchBoard run={run} />}
 
       {error && (
         <div className="notice notice--error" role="alert">

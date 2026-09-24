@@ -93,12 +93,31 @@ export const Mentor = Candidate.extend({
 });
 export type Mentor = z.infer<typeof Mentor>;
 
+/** Just enough of a person to show them while the search is still running. */
+export const MentorPreview = Candidate.pick({ slug: true, name: true, headline: true });
+export type MentorPreview = z.infer<typeof MentorPreview>;
+
 export const MentorsEvent = z.discriminatedUnion("type", [
   z.object({
     type: z.literal("progress"),
     stage: z.enum(["searching", "scoring", "writing"]),
     message: z.string(),
   }),
+  /** The X-ray queries about to run; `found` events refer to them by index. */
+  z.object({ type: z.literal("queries"), queries: z.array(z.string()) }),
+  /** One query finished. `candidates` are only the people new to this run. */
+  z.object({
+    type: z.literal("found"),
+    index: z.number().int().nonnegative(),
+    candidates: z.array(MentorPreview),
+    failed: z.boolean(),
+  }),
+  /** Everyone about to be scored (can include people found by earlier runs). */
+  z.object({ type: z.literal("scoring"), candidates: z.array(MentorPreview) }),
+  /** One scoring batch finished. */
+  z.object({ type: z.literal("scored"), scores: z.array(Score.pick({ slug: true, score: true })) }),
+  /** The TOP_N picked for this run, best first, before their blurbs are written. */
+  z.object({ type: z.literal("selected"), mentors: z.array(MentorPreview.extend({ score: z.number() })) }),
   z.object({ type: z.literal("done"), mentors: z.array(Mentor) }),
   z.object({ type: z.literal("error"), message: z.string() }),
 ]);

@@ -1,6 +1,6 @@
 // Tests the locked orchestration in pipeline.ts with services mocked and an in-memory database.
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { TOP_N, type Candidate, type Mentor } from "../src/shared/schemas";
+import { TOP_N, type Candidate, type Mentor, type MentorsEvent } from "../src/shared/schemas";
 import type { Db, PoolMentor } from "../src/worker/lib/db";
 import { finishInterview, findMentors, interviewTurn, saveDocument } from "../src/worker/pipeline";
 import { writeBlurbs } from "../src/worker/services/blurbs";
@@ -144,6 +144,61 @@ describe("findMentors", () => {
     expect(scoreBatch).toHaveBeenCalled();
     expect(mentors).toHaveLength(TOP_N);
     expect(mentors.every((m) => db.rows.get(m.slug)!.scoredVersion === 2)).toBe(true);
+  });
+});
+
+describe("findMentors events", () => {
+  const types = () => (emit.mock.calls as unknown as [MentorsEvent][]).map(([e]) => e.type);
+  const events = <T extends MentorsEvent["type"]>(type: T) =>
+    (emit.mock.calls as unknown as [MentorsEvent][]).map(([e]) => e).filter((e): e is Extract<MentorsEvent, { type: T }> => e.type === type);
+
+  it("emits queries, one found per query with only new people, scoring, scored per batch, then selected", async () => {
+    const db = fakeDb();
+    vi.mocked(generateQueries).mockResolvedValue(["q1", "q2"]);
+    vi.mocked(runSearch).mockImplementation(async (_env, [q]) =>
+      q === "q1" ? Array.from({ length: 25 }, (_, i) => candidate(`c${i}`)) : [candidate("c0"), candidate("c99")],
+    );
+
+    await findMentors(env, asDb(db), emit);
+
+    expect(events("queries")).toEqual([{ type: "queries", queries: ["q1", "q2"] }]);
+    const found = events("found").sort((a, b) => a.index - b.index);
+    expect(found.map((f) => f.candidates.length)).toEqual([25, 1]);
+    expect(found[1].candidates[0]).toEqual({ slug: "c99", name: "Person c99", headline: "Product Manager at Stripe" });
+    expect(events("scoring")[0].candidates).toHaveLength(26);
+    expect(events("scored")).toHaveLength(2); // 26 candidates / 20 per batch
+    const [selected] = events("selected");
+    expect(selected.mentors).toHaveLength(TOP_N);
+    expect(selected.mentors[0]).toMatchObject({ slug: "c99", score: 99 });
+    expect(types().indexOf("selected")).toBeLessThan(types().lastIndexOf("progress"));
+  });
+
+  it("marks a failed query and keeps going; throws only if every query fails", async () => {
+    const db = fakeDb();
+    vi.mocked(generateQueries).mockResolvedValue(["bad", "good"]);
+    vi.mocked(runSearch).mockImplementation(async (_env, [q]) => {
+      if (q === "bad") throw new Error("Brave 500");
+      return Array.from({ length: 12 }, (_, i) => candidate(`c${i}`));
+    });
+
+    await expect(findMentors(env, asDb(db), emit)).resolves.toHaveLength(TOP_N);
+    expect(events("found").find((f) => f.index === 0)).toMatchObject({ failed: true, candidates: [] });
+
+    vi.mocked(runSearch).mockRejectedValue(new Error("Brave 500"));
+    await expect(findMentors(env, asDb(fakeDb()), emit)).rejects.toThrow("Brave 500");
+  });
+
+  it("emits only selected for 'show more' from the scored pool", async () => {
+    const db = fakeDb();
+    vi.mocked(runSearch).mockResolvedValue(Array.from({ length: 30 }, (_, i) => candidate(`c${i}`)));
+    await findMentors(env, asDb(db), emit);
+    emit.mockClear();
+
+    await findMentors(env, asDb(db), emit);
+
+    expect(types()).not.toContain("queries");
+    expect(types()).not.toContain("scoring");
+    expect(events("selected")[0].mentors.map((m) => m.slug)).toEqual(Array.from({ length: 10 }, (_, i) => `c${19 - i}`));
   });
 });
 

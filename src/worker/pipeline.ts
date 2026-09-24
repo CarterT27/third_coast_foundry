@@ -76,18 +76,29 @@ export async function findMentors(env: Env, db: Db, emit: (e: MentorsEvent) => P
   let pool = await db.unshownPool(version, TOP_N);
 
   if (pool.length < TOP_N) {
-    await emit({ type: "progress", stage: "searching", message: "Searching LinkedIn profiles…" });
+    await emit({ type: "progress", stage: "searching", message: "Planning searches…" });
     const queries = await generateQueries(env, context);
-    await db.insertCandidates(await runSearch(env, queries));
+    await emit({ type: "queries", queries });
+    await emit({ type: "progress", stage: "searching", message: "Searching LinkedIn profiles…" });
+    await db.insertCandidates(await searchEach(env, queries, emit));
 
     const toScore = await db.toScore(version, MAX_SCORE_PER_RUN);
     if (toScore.length) {
       await emit({ type: "progress", stage: "scoring", message: `Scoring ${toScore.length} profiles…` });
+      await emit({ type: "scoring", candidates: toScore.map(preview) });
       const batches: Candidate[][] = [];
       for (let i = 0; i < toScore.length; i += SCORE_BATCH_SIZE) {
         batches.push(toScore.slice(i, i + SCORE_BATCH_SIZE));
       }
-      const scores = (await Promise.all(batches.map((b) => scoreBatch(env, context, b)))).flat();
+      const scores = (
+        await Promise.all(
+          batches.map(async (b) => {
+            const batch = await scoreBatch(env, context, b);
+            await emit({ type: "scored", scores: batch.map(({ slug, score }) => ({ slug, score })) });
+            return batch;
+          }),
+        )
+      ).flat();
       const bySlug = new Map(scores.map((s) => [s.slug, s]));
       await db.saveScores(
         version,
@@ -95,6 +106,10 @@ export async function findMentors(env: Env, db: Db, emit: (e: MentorsEvent) => P
       );
     }
     pool = await db.unshownPool(version, TOP_N);
+  }
+
+  if (pool.length) {
+    await emit({ type: "selected", mentors: pool.map((m) => ({ ...preview(m), score: m.score })) });
   }
 
   const stale = pool.filter((m) => !m.blurb || m.blurbVersion !== version);
@@ -108,4 +123,33 @@ export async function findMentors(env: Env, db: Db, emit: (e: MentorsEvent) => P
 
   await db.markShown(pool.map((m) => m.slug));
   return pool.map(({ blurbVersion, ...mentor }) => mentor);
+}
+
+const preview = ({ slug, name, headline }: Candidate) => ({ slug, name, headline });
+
+/**
+ * Runs each query on its own so the page can watch results arrive, emitting a `found`
+ * event per query with only the people not seen earlier in this run. Like runSearch,
+ * one failing query doesn't fail the run; throws only if every query failed.
+ */
+async function searchEach(env: Env, queries: string[], emit: (e: MentorsEvent) => Promise<void>): Promise<Candidate[]> {
+  const bySlug = new Map<string, Candidate>();
+  const failures = await Promise.all(
+    queries.map(async (query, index) => {
+      let found: Candidate[];
+      try {
+        found = await runSearch(env, [query]);
+      } catch (err) {
+        await emit({ type: "found", index, candidates: [], failed: true });
+        return err;
+      }
+      const fresh = found.filter((c) => !bySlug.has(c.slug));
+      for (const c of fresh) bySlug.set(c.slug, c);
+      await emit({ type: "found", index, candidates: fresh.map(preview), failed: false });
+      return null;
+    }),
+  );
+  const errors = failures.filter((e) => e !== null);
+  if (queries.length > 0 && errors.length === queries.length) throw errors[0];
+  return [...bySlug.values()];
 }

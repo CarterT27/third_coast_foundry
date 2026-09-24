@@ -13,7 +13,7 @@ import {
 } from "../../shared/schemas";
 import { readSSE } from "../../shared/sse";
 import type { AppType } from "../../worker/index";
-import { fixtureInterviewReplies, fixtureMentors, fixtureState } from "./fixtures";
+import { fixtureInterviewReplies, fixtureMentorRun, fixtureState } from "./fixtures";
 import { getAccessToken } from "./supabase";
 
 const USE_FIXTURES = import.meta.env.PUBLIC_USE_FIXTURES === "true";
@@ -78,23 +78,30 @@ export async function finishInterview(messages: ChatMessage[]): Promise<void> {
   if (!res.ok) throw await toError(res);
 }
 
-/** Finds the next batch of mentors ("Find" and "Show more" are the same call). */
-export async function findMentors(onProgress: (message: string) => void): Promise<Mentor[]> {
+/** Every mentor-search event except the ones that end the stream. */
+export type MentorsProgress = Exclude<MentorsEvent, { type: "done" | "error" }>;
+
+/**
+ * Finds the next batch of mentors ("Find" and "Show more" are the same call).
+ * `onEvent` gets every stream event before `done` so the page can animate the search.
+ */
+export async function findMentors(onEvent: (event: MentorsProgress) => void): Promise<Mentor[]> {
   if (USE_FIXTURES) {
-    for (const message of ["Searching LinkedIn profiles…", "Scoring 60 profiles…", "Writing notes…"]) {
-      onProgress(message);
-      await new Promise((resolve) => setTimeout(resolve, 600));
+    const { events, mentors } = fixtureMentorRun(fixtureState.mentors.length);
+    for (const [delay, event] of events) {
+      await new Promise((resolve) => setTimeout(resolve, delay));
+      onEvent(event);
     }
-    fixtureState.mentors = [...fixtureState.mentors, ...fixtureMentors];
-    return fixtureMentors;
+    fixtureState.mentors = [...fixtureState.mentors, ...mentors];
+    return mentors;
   }
   const res = await client.mentors.$post();
   if (!res.ok || !res.body) throw await toError(res);
   for await (const data of readSSE(res.body)) {
     const event = MentorsEvent.parse(JSON.parse(data));
-    if (event.type === "progress") onProgress(event.message);
     if (event.type === "error") throw new Error(event.message);
     if (event.type === "done") return event.mentors;
+    onEvent(event);
   }
   throw new Error("Mentor search ended unexpectedly");
 }

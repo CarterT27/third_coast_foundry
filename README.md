@@ -67,6 +67,9 @@ chat UI ─────────────POST /interview────▶ st
   as its raw text plus an LLM-written plaintext note. The interview reads the raw text so
   nobody waits on an LLM call to upload; notes are written when the interview finishes,
   and the mentor search reads them. Prompts can change without migrations.
+- **Live search view.** `/mentors` streams more than status lines: the queries, each
+  query's new people (`found`), who is being scored and each batch's scores, then the
+  picks (`selected`) before blurbs are written. The page animates them (`SearchBoard`).
 - **`context_version`.** A database trigger bumps it whenever a note changes. Scores and
   blurbs remember the version they were made for, so only stale ones are recomputed.
   "Show 10 more" usually costs zero LLM calls.
