@@ -51,7 +51,10 @@ const app = new Hono<AppEnv>()
   })
 
   .post("/interview/finish", validJSON(InterviewBody), async (c) => {
-    await finishInterview(c.env, c.var.db, c.req.valid("json").messages);
+    // Keep going if the user refreshes mid-finish, so the summary and rubric still get saved.
+    const finished = finishInterview(c.env, c.var.db, c.req.valid("json").messages);
+    c.executionCtx.waitUntil(finished);
+    await finished;
     return c.json({ ok: true });
   })
 

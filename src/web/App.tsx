@@ -58,6 +58,18 @@ export function App() {
         <p className="muted">Share your background, tell us what you're looking for, and we'll find people worth meeting.</p>
       </header>
 
+      {error && (
+        <div className="notice notice--error app__toast" role="alert">
+          <p className="error">Couldn't refresh: {error}</p>
+          <button className="button button--secondary" onClick={refresh}>
+            Retry
+          </button>
+          <button className="button button--secondary" onClick={() => setError(null)}>
+            Dismiss
+          </button>
+        </div>
+      )}
+
       <Step
         number={1}
         title="Your background"

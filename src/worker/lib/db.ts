@@ -31,9 +31,17 @@ export type PoolMentor = Mentor & { blurbVersion: number | null };
 
 const CONTEXT_ORDER: DocumentKind[] = ["resume", "linkedin", "transcript", "interview"];
 
+/** Per query, so a stalled connection fails the route instead of hanging it. */
+const TIMEOUT_MS = 15_000;
+
+const fetchWithTimeout: typeof fetch = (input, init) => {
+  const timeout = AbortSignal.timeout(TIMEOUT_MS);
+  return fetch(input, { ...init, signal: init?.signal ? AbortSignal.any([init.signal, timeout]) : timeout });
+};
+
 function client(env: Env, token: string): SupabaseClient {
   return createClient(env.PUBLIC_SUPABASE_URL, env.PUBLIC_SUPABASE_PUBLISHABLE_KEY, {
-    global: { headers: { Authorization: `Bearer ${token}` } },
+    global: { headers: { Authorization: `Bearer ${token}` }, fetch: fetchWithTimeout },
     auth: { persistSession: false, autoRefreshToken: false },
   });
 }

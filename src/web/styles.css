@@ -270,6 +270,14 @@ body {
   flex: 1;
 }
 
+/* Page-level errors (a failed refresh) stay in view while scrolling. */
+.app__toast {
+  position: sticky;
+  top: 12px;
+  z-index: 10;
+  box-shadow: 0 4px 16px rgb(0 0 0 / 8%);
+}
+
 /* ─── Mentor cards ──────────────────────────────────── */
 .card {
   border: 1px solid var(--border);
