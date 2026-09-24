@@ -19,7 +19,7 @@ export async function chat(env: Env, messages: LLMMessage[], opts: ChatOptions =
 
 /**
  * One completion parsed and validated against `schema`. The JSON schema is sent as
- * guided_json so the model is constrained to it; retries once if validation still fails.
+ * response_format so the model is constrained to it; retries once if validation still fails.
  */
 export async function chatJSON<T extends z.ZodType>(
   env: Env,
@@ -30,7 +30,10 @@ export async function chatJSON<T extends z.ZodType>(
   const body = {
     messages,
     ...params(env, { temperature: 0, ...opts }),
-    nvext: { guided_json: z.toJSONSchema(schema) },
+    response_format: {
+      type: "json_schema",
+      json_schema: { name: "response", schema: z.toJSONSchema(schema) },
+    },
   };
   let lastError: unknown;
   for (let attempt = 0; attempt < 2; attempt++) {
@@ -67,6 +70,8 @@ function params(env: Env, opts: ChatOptions) {
     model: env.NVIDIA_MODEL,
     temperature: opts.temperature ?? 0.4,
     max_tokens: opts.maxTokens ?? 2048,
+    // Reasoning models (e.g. Nemotron) otherwise write their thinking into the reply.
+    chat_template_kwargs: { enable_thinking: false },
   };
 }
 

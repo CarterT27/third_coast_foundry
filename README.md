@@ -19,7 +19,10 @@ npm run dev            # page + API on http://localhost:5173
   `supabase link --project-ref <ref>` and `supabase db push`. Copy the project URL and
   publishable key into `.env`.
 - **NVIDIA:** API key from [build.nvidia.com](https://build.nvidia.com). `NVIDIA_MODEL` can
-  be any chat model from the catalog.
+  be any chat model from the catalog that supports `response_format` JSON schemas
+  (default `nvidia/nemotron-3.5-lightning-30b-a3b`). Thinking is turned off in every
+  request (`chat_template_kwargs.enable_thinking: false`) so reasoning models reply
+  directly instead of writing their reasoning into the answer.
 - **Search:** Brave Search API key ($5 free credit/month ≈ 1,000 queries).
 - **No keys yet?** Set `PUBLIC_USE_FIXTURES=true` to build the UI with fake data.
 
