@@ -4,6 +4,7 @@
 import { z } from "zod";
 import { readSSE } from "../../shared/sse";
 import type { Env } from "../env";
+import { spendSubrequest } from "./subrequests";
 
 const MAX_ATTEMPTS = 3;
 /** Per attempt, body included: a host that stalls after accepting would otherwise hang forever. */
@@ -36,10 +37,11 @@ const PROVIDERS = {
     key: (env) => env.OPENROUTER_API_KEY,
     model: (env) => env.OPENROUTER_MODEL,
     headers: { "X-Title": "Third Coast Foundry" },
-    // Thinking off, and route to whichever host currently answers fastest.
-    extra: { reasoning: { enabled: false }, provider: { sort: "latency" } },
+    // Thinking off, and route to whichever host currently answers fastest among those that
+    // don't store or train on prompts (they carry resumes and interview transcripts).
+    extra: { reasoning: { enabled: false }, provider: { sort: "latency", data_collection: "deny" } },
     // Only route JSON calls to hosts that honor response_format.
-    jsonExtra: { provider: { sort: "latency", require_parameters: true } },
+    jsonExtra: { provider: { sort: "latency", data_collection: "deny", require_parameters: true } },
   },
 } satisfies Record<string, Provider>;
 
@@ -92,7 +94,8 @@ export async function chatJSON<T extends z.ZodType>(
       lastError = err;
     }
   }
-  throw new Error(`LLM returned invalid JSON: ${String(lastError)}`);
+  const detail = lastError instanceof z.ZodError ? z.prettifyError(lastError) : String(lastError);
+  throw new Error(`LLM returned invalid JSON: ${detail.slice(0, 500)}`);
 }
 
 /** Streams a completion, yielding text chunks as they arrive. */
@@ -134,6 +137,7 @@ async function request(env: Env, body: unknown): Promise<Response> {
   const p = provider(env);
   for (let attempt = 1; ; attempt++) {
     let res: Response;
+    spendSubrequest(env);
     try {
       res = await fetch(p.url, {
         method: "POST",
@@ -155,7 +159,7 @@ async function request(env: Env, body: unknown): Promise<Response> {
     // Both APIs rate limit; back off and retry on 429 / 5xx.
     const retryable = res.status === 429 || res.status >= 500;
     if (!retryable || attempt >= MAX_ATTEMPTS) {
-      throw new Error(`${p.name} API ${res.status}: ${await res.text()}`);
+      throw new Error(`${p.name} API ${res.status}: ${(await res.text()).slice(0, 300)}`);
     }
     await new Promise((resolve) => setTimeout(resolve, 1000 * 2 ** attempt));
   }

@@ -2,7 +2,7 @@
 // send it to the API. Owns its own spinner and error so slots don't block each other.
 import { useId, useState, type ChangeEvent } from "react";
 import { MAX_DOCUMENT_CHARS, type DocumentSummary, type UploadKind } from "../../shared/schemas";
-import { uploadDocument } from "../lib/api";
+import { deleteDocument, uploadDocument } from "../lib/api";
 import { extractPdfText } from "../lib/pdf";
 
 type Props = {
@@ -12,6 +12,8 @@ type Props = {
   document?: DocumentSummary;
   onUploaded: () => void;
 };
+
+const MAX_FILENAME_CHARS = 255; // server rejects longer names (UploadDocumentBody)
 
 // pdf.js errors carry a `name` like "PasswordException"; anything else is shown
 // with its message so the cause can be reported (e.g. an unsupported browser).
@@ -23,9 +25,18 @@ function readErrorMessage(err: unknown): string {
   return `We couldn't read this PDF (${detail}). Try re-exporting it, or use a different browser such as Chrome.`;
 }
 
+/** Fits the server's filename limit, keeping the extension. */
+function shortenFilename(name: string): string {
+  if (name.length <= MAX_FILENAME_CHARS) return name;
+  const dot = name.lastIndexOf(".");
+  const ext = dot > 0 && name.length - dot <= 10 ? name.slice(dot) : "";
+  const base = name.slice(0, MAX_FILENAME_CHARS - 1 - ext.length).replace(/[\uD800-\uDBFF]$/, ""); // don't split an emoji
+  return `${base}…${ext}`;
+}
+
 export function UploadSlot({ kind, label, hint, document, onUploaded }: Props) {
   const inputId = useId();
-  const [busy, setBusy] = useState(false);
+  const [busy, setBusy] = useState<"upload" | "remove" | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   async function handleFile(event: ChangeEvent<HTMLInputElement>) {
@@ -39,11 +50,12 @@ export function UploadSlot({ kind, label, hint, document, onUploaded }: Props) {
       return;
     }
 
-    setBusy(true);
+    setBusy("upload");
     try {
       let text: string;
       try {
-        text = await extractPdfText(file);
+        // Postgres text columns can't hold NUL, which some PDFs contain.
+        text = (await extractPdfText(file)).replaceAll("\0", "").trim();
       } catch (err) {
         console.error("Could not read PDF", err);
         setError(readErrorMessage(err));
@@ -53,12 +65,30 @@ export function UploadSlot({ kind, label, hint, document, onUploaded }: Props) {
         setError("This looks like a scanned PDF with no selectable text. Please upload a text-based PDF.");
         return;
       }
-      await uploadDocument({ kind, filename: file.name, sizeBytes: file.size, text: text.slice(0, MAX_DOCUMENT_CHARS) });
+      await uploadDocument({
+        kind,
+        filename: shortenFilename(file.name),
+        sizeBytes: file.size,
+        text: text.slice(0, MAX_DOCUMENT_CHARS),
+      });
       onUploaded();
     } catch (err) {
       setError(err instanceof Error ? `Upload failed: ${err.message}` : "Upload failed. Please try again.");
     } finally {
-      setBusy(false);
+      setBusy(null);
+    }
+  }
+
+  async function handleRemove() {
+    setError(null);
+    setBusy("remove");
+    try {
+      await deleteDocument(kind);
+      onUploaded();
+    } catch (err) {
+      setError(err instanceof Error ? `Couldn't remove it: ${err.message}` : "Couldn't remove it. Please try again.");
+    } finally {
+      setBusy(null);
     }
   }
 
@@ -73,9 +103,18 @@ export function UploadSlot({ kind, label, hint, document, onUploaded }: Props) {
         )}
         {error && <span className="error slot__error">{error}</span>}
       </div>
-      <input id={inputId} className="slot__input" type="file" accept="application/pdf,.pdf" disabled={busy} onChange={handleFile} />
-      <label htmlFor={inputId} className={`button button--secondary${busy ? " button--busy" : ""}`} aria-disabled={busy}>
-        {busy ? (
+      {document && (
+        <button type="button" className="button button--ghost" disabled={busy !== null} onClick={handleRemove}>
+          {busy === "remove" ? "Removing…" : "Remove"}
+        </button>
+      )}
+      <input id={inputId} className="slot__input" type="file" accept="application/pdf,.pdf" disabled={busy !== null} onChange={handleFile} />
+      <label
+        htmlFor={inputId}
+        className={`button button--secondary${busy === "upload" ? " button--busy" : ""}`}
+        aria-disabled={busy !== null}
+      >
+        {busy === "upload" ? (
           <>
             <span className="spinner" aria-hidden="true" /> Uploading…
           </>

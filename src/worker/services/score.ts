@@ -6,18 +6,18 @@ import type { Env } from "../env";
 import { chatJSON } from "../lib/llm";
 import { splitContext } from "./interview";
 
-/** Used until the student finishes the interview, which writes their own rubric. */
-const DEFAULT_RUBRIC = `- Role (up to 35): full points if they work in the student's target role; about half if in a closely related role; otherwise 0.
-- Industry and employer (up to 35): full points if they work in the student's target industry or at a target company; about half if in an adjacent industry; otherwise 0.
-- Shared background (up to 20): full points if they share a school or past employer with the student; about half if they share a city or affinity group; otherwise 0.
-- Stage (up to 10): full points if they are a few years ahead on the path the student wants; about half if they are much more senior; otherwise 0.
+/** Used until the user finishes the interview, which writes their own rubric. */
+const DEFAULT_RUBRIC = `- Role (up to 35): full points if they work in the user's target role; about half if in a closely related role; otherwise 0.
+- Industry and employer (up to 35): full points if they work in the user's target industry or at a target company; about half if in an adjacent industry; otherwise 0.
+- Shared background (up to 20): full points if they share a school or past employer with the user; about half if they share a city or affinity group; otherwise 0.
+- Stage (up to 10): full points if they are a few years ahead on the path the user wants; about half if they are much more senior; otherwise 0.
 Caps (these override the points):
 - Recruiters, talent acquisition or HR staff, and current students: at most 10.
 - Too little information in the headline and snippet to judge: at most 20.`;
 
 /**
  * Scores one batch (≤ SCORE_BATCH_SIZE) of candidates against the user's context
- * with the student's own rubric (written once by summarize and stored in the interview
+ * with the user's own rubric (written once by summarize and stored in the interview
  * note; DEFAULT_RUBRIC until then). pipeline.ts calls this once per batch, in parallel,
  * and ranks everything by score — so scores from different batches must mean the same
  * thing, which is why the rubric is read from context rather than written per batch.
@@ -31,7 +31,7 @@ Caps (these override the points):
  * Hints:
  * - `import { chatJSON } from "../lib/llm"` with `z.object({ scores: z.array(Score) })`.
  * - The rubric is points per criterion summing to 100, plus caps (recruiters, students,
- *   anything the student wants to avoid), so a score means the same in every batch.
+ *   anything the user wants to avoid), so a score means the same in every batch.
  * - temperature 0 (chatJSON's default).
  */
 export async function scoreBatch(env: Env, context: string, candidates: Candidate[]): Promise<Score[]> {
@@ -70,7 +70,7 @@ async function requestScores(env: Env, context: string, candidates: Candidate[])
     [
       {
         role: "system",
-        content: `You score LinkedIn profiles as potential mentors for one student, using that student's own rubric.
+        content: `You score LinkedIn profiles as potential mentors for one user, using that user's own rubric.
 
 <rubric>
 ${rubric || DEFAULT_RUBRIC}
@@ -89,17 +89,17 @@ How to score:
 - The "too little information" cap applies only when you can't tell their employer or their role at all.
 - A score of 90 or more needs full points on the criteria worth the most AND at least half on every other criterion. Being at the right company alone never reaches 90 when the rubric also rewards role or shared background.
 - Score each person on the rubric alone, never relative to the others in the list.
-- The reason is one sentence naming only the criteria this person actually earned points for, quoting the evidence (e.g. "Research Engineer at Google DeepMind; ex-Palantir like the student"). Don't restate the rubric's wording, mention points or arithmetic, or claim a match the profile doesn't show.
+- The reason is one sentence naming only the criteria this person actually earned points for, quoting the evidence (e.g. "Research Engineer at Google DeepMind; ex-Palantir like the user"). Don't restate the rubric's wording, mention points or arithmetic, or claim a match the profile doesn't show.
 - Return each entry as {"slug", "points", "score", "reason"}, in that order.
-- Use only facts in the student's information and the profile. Never invent employers, titles or schools.
+- Use only facts in the user's information and the profile. Never invent employers, titles or schools.
 - Return exactly one entry per person, using the slug exactly as given.
 
-What the student said they want in the interview. Where it conflicts with their documents, this wins:
+What the user said they want in the interview. Where it conflicts with their documents, this wins:
 <preferences>
 ${preferences || "No interview yet."}
 </preferences>
 
-Background from the student's documents (use it for shared schools and past employers):
+Background from the user's documents (use it for shared schools and past employers):
 <documents>
 ${documents || "Nothing known yet."}
 </documents>`,

@@ -2,12 +2,15 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { MAX_QUERIES } from "../src/shared/schemas";
 import { chatJSON } from "../src/worker/lib/llm";
-import { search } from "../src/worker/lib/search-provider";
+import { search, SearchCapacityError } from "../src/worker/lib/search-provider";
 import { buildXray, generateQueries, parseResult, runSearch } from "../src/worker/services/search";
 import { env } from "./helpers";
 
 vi.mock("../src/worker/lib/llm", () => ({ chatJSON: vi.fn() }));
-vi.mock("../src/worker/lib/search-provider", () => ({ search: vi.fn() }));
+vi.mock("../src/worker/lib/search-provider", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../src/worker/lib/search-provider")>()),
+  search: vi.fn(),
+}));
 
 beforeEach(() => vi.resetAllMocks());
 
@@ -35,6 +38,12 @@ describe("buildXray", () => {
       buildXray({ titles: ["analyst"], keywords: ["machine learning", "healthcare"], companies: [], schools: [] }),
     ).toBe('site:linkedin.com/in ("analyst") "machine learning" healthcare');
   });
+
+  it("strips quotes inside terms so the query stays balanced", () => {
+    expect(
+      buildXray({ titles: ['"lead" engineer', '""'], keywords: ['say "hi"'], companies: ['Toys "R" Us'], schools: [], location: '"NYC"' }),
+    ).toBe('site:linkedin.com/in ("lead engineer") "say hi" ("Toys R Us") "NYC"');
+  });
 });
 
 describe("parseResult", () => {
@@ -57,6 +66,21 @@ describe("parseResult", () => {
   it("normalizes country subdomains, casing and query strings", () => {
     const c = parseResult({ title: "Sam Lee – Analyst at Ramp | LinkedIn", url: "https://uk.linkedin.com/in/Sam-Lee-123?trk=x", snippet: "" });
     expect(c).toMatchObject({ slug: "sam-lee-123", name: "Sam Lee", headline: "Analyst at Ramp", url: "https://www.linkedin.com/in/sam-lee-123" });
+  });
+
+  it("accepts a trailing language code", () => {
+    for (const path of ["jane/en", "jane/pt-br/", "jane/zh_CN"]) {
+      expect(parseResult({ title: "Jane Doe - PM | LinkedIn", url: `https://www.linkedin.com/in/${path}`, snippet: "" })).toMatchObject({
+        slug: "jane",
+        url: "https://www.linkedin.com/in/jane",
+      });
+    }
+    expect(parseResult({ title: "x", url: "https://www.linkedin.com/in/jane/details/experience", snippet: "" })).toBeNull();
+  });
+
+  it("drops results with no name", () => {
+    expect(parseResult({ title: " | LinkedIn", url: "https://www.linkedin.com/in/jane", snippet: "" })).toBeNull();
+    expect(parseResult({ title: "", url: "https://www.linkedin.com/in/jane", snippet: "" })).toBeNull();
   });
 
   it("rejects non-profile URLs", () => {
@@ -85,7 +109,12 @@ describe("runSearch", () => {
 
   it("throws when every query fails", async () => {
     vi.mocked(search).mockRejectedValue(new Error("down"));
-    await expect(runSearch(env, ["q1", "q2"])).rejects.toThrow();
+    await expect(runSearch(env, ["q1", "q2"])).rejects.toThrow("Every search query failed");
+  });
+
+  it("passes the Brave cap error through as-is", async () => {
+    vi.mocked(search).mockRejectedValue(new SearchCapacityError());
+    await expect(runSearch(env, ["q1"])).rejects.toBeInstanceOf(SearchCapacityError);
   });
 });
 

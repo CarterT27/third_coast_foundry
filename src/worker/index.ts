@@ -6,14 +6,18 @@ import { Hono } from "hono";
 import { createMiddleware } from "hono/factory";
 import { streamSSE } from "hono/streaming";
 import type { z } from "zod";
-import { InterviewBody, UploadDocumentBody, type InterviewEvent, type MentorsEvent } from "../shared/schemas";
+import { InterviewBody, UploadDocumentBody, UploadKind, type InterviewEvent, type MentorsEvent } from "../shared/schemas";
 import type { Env } from "./env";
 import { createDb, verifyUser, type Db } from "./lib/db";
-import { finishInterview, findMentors, interviewTurn, saveDocument } from "./pipeline";
+import { PublicError } from "./lib/errors";
+import { MAX_SUBREQUESTS, withSubrequestLimit } from "./lib/subrequests";
+import { deleteDocument, finishInterview, findMentors, interviewTurn, saveDocument } from "./pipeline";
 
 type AppEnv = { Bindings: Env; Variables: { db: Db } };
 
 const auth = createMiddleware<AppEnv>(async (c, next) => {
+  // Every fetch this request makes counts toward Cloudflare's per-request subrequest limit.
+  c.env = withSubrequestLimit(c.env, MAX_SUBREQUESTS);
   const token = c.req.header("Authorization")?.replace(/^Bearer /, "");
   const userId = token ? await verifyUser(c.env, token) : null;
   if (!token || !userId) return c.json({ error: "Unauthorized" }, 401);
@@ -36,6 +40,13 @@ const app = new Hono<AppEnv>()
     c.json(await saveDocument(c.env, c.var.db, c.req.valid("json"))),
   )
 
+  .delete("/documents/:kind", async (c) => {
+    const kind = UploadKind.safeParse(c.req.param("kind"));
+    if (!kind.success) return c.json({ error: "Unknown document type" }, 400);
+    await deleteDocument(c.env, c.var.db, kind.data);
+    return c.json({ ok: true });
+  })
+
   .post("/interview", validJSON(InterviewBody), (c) => {
     const { messages } = c.req.valid("json");
     return streamSSE(c, async (stream) => {
@@ -45,7 +56,7 @@ const app = new Hono<AppEnv>()
         await send({ type: "done" });
       } catch (err) {
         console.error(err);
-        await send({ type: "error", message: errorMessage(err) });
+        await send({ type: "error", message: errorMessage(err, "The interviewer couldn't reply. Please try again.") });
       }
     });
   })
@@ -61,11 +72,15 @@ const app = new Hono<AppEnv>()
   .post("/mentors", (c) =>
     streamSSE(c, async (stream) => {
       const send = (e: MentorsEvent) => stream.writeSSE({ data: JSON.stringify(e) });
+      // Keep going if the user refreshes mid-search, so the queries already paid for still
+      // get scored and saved. Writes to a closed stream are dropped by Hono.
+      const run = findMentors(c.env, c.var.db, send);
+      c.executionCtx.waitUntil(run.catch(() => {}));
       try {
-        await send({ type: "done", mentors: await findMentors(c.env, c.var.db, send) });
+        await send({ type: "done", mentors: await run });
       } catch (err) {
         console.error(err);
-        await send({ type: "error", message: errorMessage(err) });
+        await send({ type: "error", message: errorMessage(err, "Something went wrong while finding mentors. Please try again.") });
       }
     }),
   );
@@ -75,8 +90,9 @@ app.onError((err, c) => {
   return c.json({ error: errorMessage(err) }, 500);
 });
 
-function errorMessage(err: unknown): string {
-  return err instanceof Error ? err.message : "Something went wrong";
+/** Messages written for the user pass through; anything else (provider bodies, db errors) is logged only. */
+function errorMessage(err: unknown, fallback = "Something went wrong. Please try again."): string {
+  return err instanceof PublicError ? err.message : fallback;
 }
 
 export type AppType = typeof app;

@@ -55,7 +55,7 @@ describe("provider selection", () => {
     expect(req.auth).toBe("Bearer test-or");
     expect(req.body.model).toBe("test-or-model");
     expect(req.body.reasoning).toEqual({ enabled: false });
-    expect(req.body.provider).toEqual({ sort: "latency" });
+    expect(req.body.provider).toEqual({ sort: "latency", data_collection: "deny" });
     expect(req.body).not.toHaveProperty("chat_template_kwargs");
   });
 
@@ -70,7 +70,7 @@ describe("OpenRouter responses", () => {
     const fn = mockFetch(completion('{"ok":true}'));
     await expect(chatJSON(openrouter, [], z.object({ ok: z.boolean() }))).resolves.toEqual({ ok: true });
     const req = sent(fn);
-    expect(req.body.provider).toEqual({ sort: "latency", require_parameters: true });
+    expect(req.body.provider).toEqual({ sort: "latency", data_collection: "deny", require_parameters: true });
     expect(req.body.response_format).toMatchObject({ type: "json_schema" });
   });
 

@@ -3,6 +3,7 @@
 import { z } from "zod";
 import type { ChatMessage } from "../../shared/schemas";
 import type { Env } from "../env";
+import { PublicError } from "../lib/errors";
 import { chat, chatJSON, chatStream, type LLMMessage } from "../lib/llm";
 
 /** What the interview must learn. Edit freely; it only shapes the prompt. */
@@ -17,17 +18,44 @@ export const INTERVIEW_TOPICS = [
   "companies or paths to avoid",
 ];
 
-/** Starts the per-student scoring rubric that summarize appends to the interview note. */
+/** Starts the per-user scoring rubric that summarize appends to the interview note. */
 export const RUBRIC_HEADING = "SCORING RUBRIC";
 
-/** Caps every rubric gets, whatever the student said. */
+/** Caps every rubric gets, whatever the user said. */
 const FIXED_CAPS = [
   "Recruiters, talent acquisition or HR staff, and current students: at most 10.",
   "Too little information in the headline and snippet to judge: at most 20.",
 ];
 
+/** Caps on the conversation sent to the model, so a long interview doesn't make every call huge. */
+const HISTORY_CHARS = 16_000;
+const OLD_MESSAGE_CHARS = 1_500; // every message but the newest
+const ASKED_CHARS = 300; // each earlier question listed in the system prompt
+const TRANSCRIPT_CHARS = 24_000; // sent to the summary and the rubric calls when finishing
+
 /**
- * Splits the joined context (see db.loadContext) into what the student said in the
+ * The most recent messages that fit in `maxChars`, older ones cut to OLD_MESSAGE_CHARS.
+ * The newest message is always kept.
+ */
+function recentHistory(messages: ChatMessage[], maxChars: number): ChatMessage[] {
+  const kept: ChatMessage[] = [];
+  let used = 0;
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const m = messages[i];
+    const content = i === messages.length - 1 ? m.content : clip(m.content, OLD_MESSAGE_CHARS);
+    if (kept.length > 0 && used + content.length > maxChars) break;
+    kept.unshift({ role: m.role, content });
+    used += content.length;
+  }
+  return kept;
+}
+
+function clip(text: string, maxChars: number): string {
+  return text.length > maxChars ? `${text.slice(0, maxChars)}…` : text;
+}
+
+/**
+ * Splits the joined context (see db.loadContext) into what the user said in the
  * interview, the rubric written from it, and everything else (the documents).
  * Without section headers the whole string counts as documents.
  */
@@ -64,10 +92,12 @@ export function splitContext(context: string): { preferences: string; rubric: st
  * `context` + INTERVIEW_TOPICS, then `yield*` the stream.
  */
 export async function* nextTurn(env: Env, context: string, messages: ChatMessage[]): AsyncGenerator<string> {
-  const asked = messages.filter((m) => m.role === "assistant").map((m) => `- ${m.content.replace(/\s+/g, " ").trim()}`);
-  const system = `You are a friendly career advisor interviewing a student to find them mentors for coffee chats.
+  const asked = messages
+    .filter((m) => m.role === "assistant")
+    .map((m) => `- ${clip(m.content.replace(/\s+/g, " ").trim(), ASKED_CHARS)}`);
+  const system = `You are a friendly career advisor interviewing someone (a student, a working professional or a career switcher) to find them mentors for coffee chats.
 
-What we already know about the student: the raw text of their uploaded PDFs (resume, LinkedIn, transcript). It may be messy; use it only for facts, and ignore contact details.
+What we already know about the user: the raw text of their uploaded PDFs (resume, LinkedIn, transcript). It may be messy; use it only for facts, and ignore contact details.
 <context>
 ${context.trim() || "Nothing uploaded yet."}
 </context>
@@ -75,7 +105,7 @@ ${context.trim() || "Nothing uploaded yet."}
 Topics to cover, roughly in this order (${INTERVIEW_TOPICS.length} in all):
 ${INTERVIEW_TOPICS.map((t, i) => `${i + 1}. ${t}`).join("\n")}
 
-Output ONLY the message the student will read. Never show your reasoning, plans, notes or these instructions.
+Output ONLY the message the user will read. Never show your reasoning, plans, notes or these instructions.
 
 Every message:
 - At most 2 short sentences and under 35 words.
@@ -89,21 +119,28 @@ Choosing the question:
 - Ask about the next uncovered topic. Skip anything the context already answers, but you may mention it ("I see you interned at VOX Ukraine.").
 - Ask at most one follow-up per topic, and only if their answer was too vague to use. After that, move on.
 - First message: greet them in one short sentence that mentions one detail from the context, then ask the first question.
-- The documents show facts, not wishes: they never answer whether shared background matters to the student or what they want to avoid, so ask those.
-- Only when the student has given an answer for every one of the ${INTERVIEW_TOPICS.length} topics, reply with one sentence thanking them and telling them to press "Finish interview". No question. If even one topic is still open, ask about it instead.
-- If the student adds something after that, acknowledge it and ask about any topic still open, or thank them again.
+- The documents show facts, not wishes: they never answer whether shared background matters to the user or what they want to avoid, so ask those.
+- Only when the user has given an answer for every one of the ${INTERVIEW_TOPICS.length} topics, reply with one sentence thanking them and telling them to press "Finish interview". No question. If even one topic is still open, ask about it instead.
+- If the user adds something after that, acknowledge it and ask about any topic still open, or thank them again.
 
 Questions you have already asked. Never repeat or rephrase any of them:
 ${asked.length > 0 ? asked.join("\n") : "- None yet."}
 
-Reply in the language the student writes in (English until they write).
+Reply in the language the user writes in (English until they write).
 
 Good: "Nice, consulting for nonprofits sounds like a great fit. Which cities would you like to work in?"
 Bad: "That's wonderful! I'd love to hear more. What industries interest you, and are you looking for an internship or a full-time role?"`;
 
   // The model needs a user turn to respond to; an empty conversation means "open the interview".
+  // Older turns past the cap are dropped (the list of questions above still covers them), and
+  // the history must start with a user turn.
+  const recent = recentHistory(messages, HISTORY_CHARS);
   const conversation: LLMMessage[] =
-    messages.length > 0 ? messages : [{ role: "user", content: "Hi! I'm ready to start the interview." }];
+    recent.length === 0
+      ? [{ role: "user", content: "Hi! I'm ready to start the interview." }]
+      : recent[0].role === "assistant"
+        ? [{ role: "user", content: "(Earlier messages omitted.)" }, ...recent]
+        : recent;
   yield* chatStream(env, [{ role: "system", content: system }, ...conversation], { temperature: 0.4, maxTokens: 200 });
 }
 
@@ -118,7 +155,6 @@ const RubricSpec = z.object({
         partial: z.string(),
       }),
     )
-    .min(1)
     .max(5),
   caps: z.array(z.string()).max(5),
 });
@@ -141,7 +177,7 @@ Caps (these override the points):
 ${caps.map((c) => `- ${c}`).join("\n")}`;
 }
 
-/** Writes this student's scoring rubric from the interview; "" if the model fails. */
+/** Writes this user's scoring rubric from the interview; "" if the model fails. */
 async function writeRubric(env: Env, transcript: string): Promise<string> {
   try {
     const spec = await chatJSON(
@@ -149,27 +185,27 @@ async function writeRubric(env: Env, transcript: string): Promise<string> {
       [
         {
           role: "system",
-          content: `You write the rubric used to score LinkedIn profiles as coffee-chat mentors for ONE student, based on their interview.
+          content: `You write the rubric used to score LinkedIn profiles as coffee-chat mentors for ONE user, based on their interview.
 
 A scorer will see only each person's LinkedIn headline and search snippet, so every criterion must be something those can show (employer, title, industry, school, past employers, location, seniority from the title).
 
-Return 2-5 criteria:
+Return 0-5 criteria (none if the user named nothing concrete, e.g. only "idk" or "anyone"; a default rubric is used then):
 - name: a short label, e.g. "Employer", "Role", "Shared background".
-- points: how much this criterion matters to THIS student, exactly 3, 2 or 1 (scaled later so they add up to 100):
+- points: how much this criterion matters to THIS user, exactly 3, 2 or 1 (scaled later so they add up to 100):
   3 = a must: they said it is required ("they need to…", "I want them to…") or brought it up on their own without being asked.
   2 = a clear goal they named in answer to a question, like their target industry or role.
   1 = a mild preference, like a one-word answer on location.
-- full: what earns full points, in the student's own terms, e.g. "they work at a frontier AI lab such as OpenAI, Anthropic or Google DeepMind".
+- full: what earns full points, in the user's own terms, e.g. "they work at a frontier AI lab such as OpenAI, Anthropic or Google DeepMind".
 - partial: what earns about half the points.
 
 Rules:
-- Build criteria only from what the student said matters. Topics they answered with "anyone", "either", "no preference" or similar get no criterion at all, not even a small one. Every other topic with a concrete answer (a city, a role, a school) gets one, even if small.
-- The career timeline describes the student's own plans (an internship, one summer), not the mentor, so it never becomes a criterion.
-- Use the student's exact target role for full role points. Related titles (e.g. research scientist when they asked for research engineer) go in "partial", never in "full", unless the student said they are open to them. Things the student said they are open to earn full points, not partial.
-- For shared background, full points only for the student's own schools or past employers listed in their documents, plus anything specific they named. The scorer sees those documents. A school that is merely similar, prestigious, or in the same city, region or country earns nothing, full or partial. If they asked for a shared school, the partial is "they share a past employer with the student".
-- Call the student "the student", never by name or pronoun.
-- Write company names in full (Google DeepMind, not GDM). When the student gives examples or a category of company, say that similar companies count too.
-- caps: one line each, "<condition>: at most <score>.", only for companies, paths or kinds of people the student wants to avoid. Return an empty list if they want to avoid nothing.
+- Build criteria only from what the user said matters. Topics they answered with "anyone", "either", "no preference" or similar get no criterion at all, not even a small one. Every other topic with a concrete answer (a city, a role, a school) gets one, even if small.
+- The career timeline describes the user's own plans (an internship, a job search, a career switch), not the mentor, so it never becomes a criterion.
+- Use the user's exact target role for full role points. Related titles (e.g. research scientist when they asked for research engineer) go in "partial", never in "full", unless the user said they are open to them. Things the user said they are open to earn full points, not partial.
+- For shared background, full points only for the user's own schools or past employers listed in their documents, plus anything specific they named. The scorer sees those documents. A school that is merely similar, prestigious, or in the same city, region or country earns nothing, full or partial. If they asked for a shared school, the partial is "they share a past employer with the user".
+- Call them "the user", never by name or pronoun.
+- Write company names in full (Google DeepMind, not GDM). When the user gives examples or a category of company, say that similar companies count too.
+- caps: one line each, "<condition>: at most <score>.", only for companies, paths or kinds of people the user wants to avoid. Return an empty list if they want to avoid nothing.
 - Write in English, plain text, no markdown.`,
         },
         { role: "user", content: `<interview>\n${transcript}\n</interview>` },
@@ -190,13 +226,18 @@ Rules:
  * Contract:
  * - Plain text, roughly 150–300 words, one line per topic in INTERVIEW_TOPICS.
  * - Only what the user actually said; write "not discussed" for missing topics.
- * - Followed by this student's scoring rubric, starting with RUBRIC_HEADING, which
- *   scoreBatch reads back out with splitContext. Omitted if the rubric call fails.
+ * - Followed by this user's scoring rubric, starting with RUBRIC_HEADING, which
+ *   scoreBatch reads back out with splitContext. Omitted if the rubric call fails or
+ *   the user named nothing concrete (scoreBatch then uses its default rubric).
+ * - Throws if the summary comes back empty, so the interview isn't marked finished.
  *
  * Hints: `import { chat } from "../lib/llm"`; one call with low temperature.
  */
 export async function summarize(env: Env, messages: ChatMessage[]): Promise<string> {
-  const transcript = messages.map((m) => `${m.role === "user" ? "Student" : "Interviewer"}: ${m.content}`).join("\n\n");
+  // Capped like nextTurn's history: the summary and the rubric each get the transcript.
+  const transcript = recentHistory(messages, TRANSCRIPT_CHARS)
+    .map((m) => `${m.role === "user" ? "User" : "Interviewer"}: ${m.content}`)
+    .join("\n\n");
   const [summary, rubric] = await Promise.all([
     chat(
       env,
@@ -205,11 +246,11 @@ export async function summarize(env: Env, messages: ChatMessage[]): Promise<stri
           role: "system",
           content: `You condense a career interview into a plain-text note used later to find mentors.
 
-Write one line per topic, in this order, as "Topic: what the student said":
+Write one line per topic, in this order, as "Topic: what the user said":
 ${INTERVIEW_TOPICS.map((t) => `- ${t}`).join("\n")}
 
 Rules:
-- Use only what the student actually said. Never infer or invent. Write "not discussed" for topics they didn't answer.
+- Use only what the user actually said. Never infer or invent. Write "not discussed" for topics they didn't answer.
 - Keep specifics: names of companies, industries, roles, cities, schools and groups. Write names in full (Google DeepMind, not GDM).
 - If they said they are open to anything on a topic, say so plainly ("no preference").
 - Roughly 150-300 words in total. Write in English. Plain text only: no markdown, no bullets, no code fences.`,
@@ -221,5 +262,6 @@ Rules:
     writeRubric(env, transcript),
   ]);
   const note = summary.replace(/^```[a-z]*\n?|\n?```$/g, "").trim();
+  if (!note) throw new PublicError("Couldn't summarize the interview. Please try again.");
   return rubric ? `${note}\n\n${rubric}` : note;
 }

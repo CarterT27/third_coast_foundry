@@ -31,7 +31,7 @@ export function Interview({ interview, onChange }: Props) {
   const [draft, setDraft] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [finishing, setFinishing] = useState(false);
-  const [saved, setSaved] = useState(false); // finished and nothing said since
+  const [saved, setSaved] = useState(interview.done); // finished and nothing said since
   const viewportRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const opened = useRef(false);
@@ -57,12 +57,14 @@ export function Interview({ interview, onChange }: Props) {
       });
       setMessages([...conversation, { role: "assistant", content: text }]);
       replied.current = true;
+      // The server saved this turn; reload so reopening "Edit" doesn't start from older messages.
+      onChange();
     } catch (err) {
       setError(errorMessage(err, "The interviewer couldn't reply."));
     } finally {
       setReply(null);
     }
-  }, []);
+  }, [onChange]);
 
   // Open the conversation once if nothing has been said yet.
   useEffect(() => {

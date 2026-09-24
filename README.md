@@ -29,9 +29,12 @@ npm run dev            # page + API on http://localhost:5173
   - **OpenRouter** (paid, fast): API key from [openrouter.ai/keys](https://openrouter.ai/keys).
     **Set a credit limit on the key.** `OPENROUTER_MODEL` defaults to
     `~deepseek/deepseek-v4-flash-latest` (the `~` alias tracks the newest V4 Flash). Requests turn thinking off (`reasoning.enabled: false`),
-    go to the lowest-latency host (`provider.sort: "latency"`), and JSON calls only go to
+    go to the lowest-latency host that doesn't store or train on prompts
+    (`provider.sort: "latency"`, `provider.data_collection: "deny"`), and JSON calls only go to
     hosts that support `response_format` (`provider.require_parameters: true`).
-- **Search:** Brave Search API key ($5 free credit/month ≈ 1,000 queries).
+- **Search:** Brave Search API key on the "Search" plan ($5 free credit/month ≈ 1,000
+  queries, 50 requests/second). Queries are spaced 200 ms apart. Once the monthly quota or
+  spending cap is used up, searches show "Search is at capacity this month".
 - **No keys yet?** Set `PUBLIC_USE_FIXTURES=true` to build the UI with fake data.
 
 All config lives in `.env`. Only `PUBLIC_*` values reach the browser. Don't create a
@@ -51,6 +54,7 @@ once, then `npm run deploy`. Either way it builds the page with the `PUBLIC_*` v
 Browser                                   Worker (/api/*)                     Services
 ───────                                   ───────────────                     ────────
 pdf.js extracts text ──POST /documents──▶ store raw text (no LLM call)
+"Remove" ─────DELETE /documents/:kind───▶ delete it (trigger bumps context_version)
 chat UI ─────────────POST /interview────▶ stream reply from raw text ─────▶ nextTurn
 "Finish" ─────POST /interview/finish────▶ save summary as a document ─────▶ summarize
                                            + write missing notes ────────▶ extractContext
@@ -60,7 +64,7 @@ chat UI ─────────────POST /interview────▶ st
                                            2. else: queries → search → store ─▶ generateQueries, runSearch
                                               score new/stale in batches of 20 ▶ scoreBatch
                                            3. write missing/stale blurbs ────▶ writeBlurbs
-                                           4. mark the 10 as shown
+                                           4. mark the 10 as shown (only ones no other tab claimed)
 ```
 
 - **Context, not structured data.** Each document (and the finished interview) is stored
@@ -73,6 +77,9 @@ chat UI ─────────────POST /interview────▶ st
 - **`context_version`.** A database trigger bumps it whenever a note changes. Scores and
   blurbs remember the version they were made for, so only stale ones are recomputed.
   "Show 10 more" usually costs zero LLM calls.
+- **Subrequest budget.** Cloudflare's free plan allows 50 outgoing fetches per request.
+  Every fetch spends from a budget (`src/worker/lib/subrequests.ts`); searching and scoring
+  stop early to leave room for saving, so a run returns what it found instead of dying.
 - **Security.** Visitors get an anonymous Supabase account. The Worker queries Postgres
   with the user's own token, so row-level security applies to every query.
 

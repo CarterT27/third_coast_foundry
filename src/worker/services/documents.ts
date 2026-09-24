@@ -32,7 +32,7 @@ const SECTIONS: Record<UploadKind, { intro: string; sections: Section[] }> = {
     sections: [
       ["Education", "each school on its own: school, college, degree, majors and minors, graduation date if printed"],
       ["GPA", "the cumulative GPA for each school, named with the school; a major GPA only if printed"],
-      ["Honors", "honors printed on this student's record (for example dean's list), with the school and terms"],
+      ["Honors", "honors printed on this person's record (for example dean's list), with the school and terms"],
       [
         "Advanced coursework",
         "every upper-division, graduate-level or honors course, judged by the school's course numbering, " +
@@ -56,12 +56,12 @@ const SECTIONS: Record<UploadKind, { intro: string; sections: Section[] }> = {
   },
 };
 
-const SYSTEM = `You write short context notes about a student that are later used to find mentors for coffee chats.
+const SYSTEM = `You write short context notes about a person that are later used to find mentors for coffee chats.
 
 Rules:
-- Use only facts printed in the document about this student. Never guess, infer or invent anything, such as an expected graduation date, a GPA or an honor that isn't printed. If something is unclear, leave it out.
+- Use only facts printed in the document about this user. Never guess, infer or invent anything, such as an expected graduation date, a GPA or an honor that isn't printed. If something is unclear, leave it out.
 - A document may cover more than one school, or be several documents combined. Keep each school separate and attribute every degree, course, GPA and honor to the school it belongs to.
-- Ignore boilerplate: watermarks, page headers and footers, grading legends, registrar and policy text, and the institution's own address. Use it only to interpret the record, never as facts about the student.
+- Ignore boilerplate: watermarks, page headers and footers, grading legends, registrar and policy text, and the institution's own address. Use it only to interpret the record, never as facts about the user.
 - Leave out phone numbers, email addresses, street addresses, profile URLs, and ID or social security numbers.
 - Aim for 150-400 words. Keep each fact short instead of copying sentences.
 - Write plain text only: no JSON, no markdown, no bullet symbols, no code fences.`;

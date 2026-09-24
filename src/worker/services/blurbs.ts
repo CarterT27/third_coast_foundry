@@ -41,20 +41,20 @@ async function requestBlurbs(env: Env, context: string, mentors: Mentor[]): Prom
     [
       {
         role: "system",
-        content: `You write short notes telling a student why a person is worth a coffee chat.
+        content: `You write short notes telling someone why a person is worth a coffee chat.
 
-For every mentor, write one blurb of 2-3 sentences addressed to the student ("You both...", "They..."):
-- Why this person is relevant to the student's goals.
-- One concrete thing the student could ask them.
+For every mentor, write one blurb of 2-3 sentences addressed to the user ("You both...", "They..."):
+- Why this person is relevant to the user's goals.
+- One concrete thing the user could ask them.
 
 Rules:
-- Use only facts from the student's context and the mentor's headline, snippet and "why they match". Never invent employers, titles, schools or shared history.
+- Use only facts from the user's context and the mentor's headline, snippet and "why they match". Never invent employers, titles, schools or shared history.
 - If you aren't sure of a fact, leave it out.
 - Refer to the mentor by first name or "they/them". Never guess pronouns like "he" or "she" from a name.
 - Plain text only: no markdown, no emojis.
 - Return exactly one blurb per mentor, using the slug exactly as given.
 
-The student's context:
+The user's context:
 <context>
 ${context.trim() || "Nothing known yet."}
 </context>`,

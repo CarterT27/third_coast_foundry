@@ -2,6 +2,8 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { TOP_N, type Candidate, type Mentor, type MentorsEvent } from "../src/shared/schemas";
 import type { Db, PoolMentor } from "../src/worker/lib/db";
+import { SearchCapacityError } from "../src/worker/lib/search-provider";
+import { SubrequestLimitError, subrequestsLeft, withSubrequestLimit } from "../src/worker/lib/subrequests";
 import { finishInterview, findMentors, interviewTurn, saveDocument } from "../src/worker/pipeline";
 import { writeBlurbs } from "../src/worker/services/blurbs";
 import { extractContext } from "../src/worker/services/documents";
@@ -47,6 +49,7 @@ function fakeDb(version = 1) {
     },
     toScore: async (v: number, limit: number) =>
       [...rows.values()].filter((r) => !r.shown && r.scoredVersion !== v).slice(0, limit),
+    unscored: async (limit: number) => [...rows.values()].filter((r) => !r.shown && r.scoredVersion === null).slice(0, limit),
     saveScores: async (v: number, scored: (Candidate & { score: number; reason: string })[]) => {
       for (const s of scored) Object.assign(rows.get(s.slug)!, { score: s.score, reason: s.reason, scoredVersion: v });
     },
@@ -54,7 +57,9 @@ function fakeDb(version = 1) {
       for (const m of ms) Object.assign(rows.get(m.slug)!, { blurb: m.blurb, blurbVersion: v });
     },
     markShown: async (slugs: string[]) => {
-      for (const s of slugs) rows.get(s)!.shown = true;
+      const claimed = slugs.filter((s) => !rows.get(s)!.shown);
+      for (const s of claimed) rows.get(s)!.shown = true;
+      return claimed;
     },
     docs,
     getRawText: async (kind: string) => docs.get(kind)?.rawText ?? null,
@@ -147,6 +152,60 @@ describe("findMentors", () => {
   });
 });
 
+describe("findMentors failures", () => {
+  it("keeps the batches that scored when one fails, and scores the rest next run without searching", async () => {
+    const db = fakeDb();
+    vi.mocked(runSearch).mockResolvedValue(Array.from({ length: 25 }, (_, i) => candidate(`c${i}`)));
+    const scoreOk = vi.mocked(scoreBatch).getMockImplementation()!;
+    vi.mocked(scoreBatch).mockImplementationOnce(async () => {
+      throw new Error("LLM down");
+    });
+
+    await expect(findMentors(env, asDb(db), emit)).resolves.toHaveLength(5);
+    const unscored = [...db.rows.values()].filter((r) => r.scoredVersion === null);
+    expect(unscored).toHaveLength(20);
+
+    vi.mocked(scoreBatch).mockImplementation(scoreOk);
+    vi.mocked(generateQueries).mockClear();
+    await expect(findMentors(env, asDb(db), emit)).resolves.toHaveLength(TOP_N);
+    expect(generateQueries).not.toHaveBeenCalled();
+    expect([...db.rows.values()].every((r) => r.scoredVersion === 1)).toBe(true);
+  });
+
+  it("throws if every batch fails, but keeps the people found for the retry", async () => {
+    const db = fakeDb();
+    vi.mocked(runSearch).mockResolvedValue(Array.from({ length: 25 }, (_, i) => candidate(`c${i}`)));
+    const scoreOk = vi.mocked(scoreBatch).getMockImplementation()!;
+    vi.mocked(scoreBatch).mockRejectedValue(new Error("LLM down"));
+
+    await expect(findMentors(env, asDb(db), emit)).rejects.toThrow("LLM down");
+    expect(db.rows.size).toBe(25);
+
+    vi.mocked(scoreBatch).mockImplementation(scoreOk);
+    vi.mocked(generateQueries).mockClear();
+    vi.mocked(runSearch).mockClear();
+    await expect(findMentors(env, asDb(db), emit)).resolves.toHaveLength(TOP_N);
+    expect(runSearch).not.toHaveBeenCalled();
+  });
+
+  it("saves each batch's scores as soon as it's scored", async () => {
+    const db = fakeDb();
+    vi.mocked(runSearch).mockResolvedValue(Array.from({ length: 25 }, (_, i) => candidate(`c${i}`)));
+    let release!: () => void;
+    const stuck = new Promise<void>((resolve) => (release = resolve));
+    const scoreOk = vi.mocked(scoreBatch).getMockImplementation()!;
+    vi.mocked(scoreBatch).mockImplementation(async (e, ctx, cs) => {
+      if (cs.length < 20) await stuck;
+      return scoreOk(e, ctx, cs);
+    });
+
+    const run = findMentors(env, asDb(db), emit);
+    await vi.waitFor(() => expect([...db.rows.values()].filter((r) => r.scoredVersion === 1)).toHaveLength(20));
+    release();
+    await run;
+  });
+});
+
 describe("findMentors events", () => {
   const types = () => (emit.mock.calls as unknown as [MentorsEvent][]).map(([e]) => e.type);
   const events = <T extends MentorsEvent["type"]>(type: T) =>
@@ -186,6 +245,44 @@ describe("findMentors events", () => {
 
     vi.mocked(runSearch).mockRejectedValue(new Error("Brave 500"));
     await expect(findMentors(env, asDb(fakeDb()), emit)).rejects.toThrow("Brave 500");
+  });
+
+  it("reports a friendly message when every query hits the Brave cap", async () => {
+    vi.mocked(generateQueries).mockResolvedValue(["q1", "q2"]);
+    vi.mocked(runSearch).mockImplementation(async (_env, [q]) => {
+      throw q === "q1" ? new Error("Brave 500") : new SearchCapacityError();
+    });
+    await expect(findMentors(env, asDb(fakeDb()), emit)).rejects.toThrow("Search is at capacity this month");
+  });
+
+  it("goes on without queries that ran past the subrequest budget", async () => {
+    vi.mocked(generateQueries).mockResolvedValue(["q1", "q2"]);
+    vi.mocked(runSearch).mockRejectedValue(new SubrequestLimitError("out"));
+    await expect(findMentors(env, asDb(fakeDb()), emit)).resolves.toEqual([]);
+    expect(events("found").every((f) => f.failed)).toBe(true);
+  });
+
+  it("holds back part of the budget for scoring and saving while searching", async () => {
+    const left: number[] = [];
+    vi.mocked(runSearch).mockImplementation(async (e) => {
+      left.push(subrequestsLeft(e));
+      return [];
+    });
+    await findMentors(withSubrequestLimit(env, 50), asDb(fakeDb()), emit);
+    expect(left[0]).toBeGreaterThan(0);
+    expect(left[0]).toBeLessThan(35);
+  });
+
+  it("returns only the mentors this run claimed when another tab showed them first", async () => {
+    const db = fakeDb();
+    vi.mocked(runSearch).mockResolvedValue(Array.from({ length: 12 }, (_, i) => candidate(`c${i + 1}`)));
+    const markShown = db.markShown;
+    db.markShown = async (slugs: string[]) => {
+      await markShown(slugs.slice(0, 4)); // the other tab got these
+      return markShown(slugs);
+    };
+    const mentors = await findMentors(env, asDb(db), emit);
+    expect(mentors).toHaveLength(TOP_N - 4);
   });
 
   it("emits only selected for 'show more' from the scored pool", async () => {
@@ -249,6 +346,19 @@ describe("context notes", () => {
     expect(db.docs.get("resume")?.context).toBe("note resume");
     expect(db.docs.get("transcript")?.context).toBe("note transcript");
     expect(db.saveInterview).toHaveBeenCalledWith([], "summary");
+  });
+
+  it("saves a placeholder for an empty note so it isn't regenerated on every search", async () => {
+    const db = fakeDb();
+    await upload(db, "resume", "R");
+    vi.mocked(extractContext).mockResolvedValue("  ");
+    vi.mocked(runSearch).mockResolvedValue([]);
+
+    await findMentors(env, asDb(db), emit);
+    await findMentors(env, asDb(db), emit);
+
+    expect(extractContext).toHaveBeenCalledTimes(1);
+    expect(db.docs.get("resume")?.context).not.toBe("");
   });
 
   it("drops a note whose document was re-uploaded while it was being written", async () => {

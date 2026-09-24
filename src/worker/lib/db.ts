@@ -11,6 +11,7 @@ import type {
   UploadKind,
 } from "../../shared/schemas";
 import type { Env } from "../env";
+import { spendSubrequest } from "./subrequests";
 
 type MentorRow = {
   user_id: string;
@@ -29,19 +30,41 @@ type MentorRow = {
 /** A scored, not-yet-shown mentor plus the version its blurb was written for. */
 export type PoolMentor = Mentor & { blurbVersion: number | null };
 
+/** Actions with a daily limit (see use_quota in the migrations). */
+export type QuotaKind = "search" | "mentors" | "interview" | "finish" | "document";
+
+/** 'ok', or which limit is used up. */
+export type QuotaResult = "ok" | "user" | "site";
+
+/** The last search run for this user: its context version, Brave page, and whether it found nobody new. */
+export type LastSearch = { version: number | null; page: number; exhausted: boolean };
+
+/** Column size limits (CHECK constraints in the migrations); longer values are cut to fit. */
+const MAX_NOTE_CHARS = 30_000;
+const MAX_MESSAGE_CHARS = 4_000;
+const MAX_SLUG_CHARS = 200;
+const FIELD_CHARS = { name: 300, headline: 500, snippet: 1000, reason: 2000, blurb: 4000 };
+
 const CONTEXT_ORDER: DocumentKind[] = ["resume", "linkedin", "transcript", "interview"];
 
 /** Per query, so a stalled connection fails the route instead of hanging it. */
 const TIMEOUT_MS = 15_000;
 
-const fetchWithTimeout: typeof fetch = (input, init) => {
-  const timeout = AbortSignal.timeout(TIMEOUT_MS);
-  return fetch(input, { ...init, signal: init?.signal ? AbortSignal.any([init.signal, timeout]) : timeout });
-};
+/** Lowest score worth showing; 0 means the person matched nothing in the rubric. */
+const MIN_SCORE = 1;
+
+/** Counts toward the request's subrequest budget, with a timeout per query. */
+function budgetedFetch(env: Env): typeof fetch {
+  return (input, init) => {
+    spendSubrequest(env);
+    const timeout = AbortSignal.timeout(TIMEOUT_MS);
+    return fetch(input, { ...init, signal: init?.signal ? AbortSignal.any([init.signal, timeout]) : timeout });
+  };
+}
 
 function client(env: Env, token: string): SupabaseClient {
   return createClient(env.PUBLIC_SUPABASE_URL, env.PUBLIC_SUPABASE_PUBLISHABLE_KEY, {
-    global: { headers: { Authorization: `Bearer ${token}` }, fetch: fetchWithTimeout },
+    global: { headers: { Authorization: `Bearer ${token}` }, fetch: budgetedFetch(env) },
     auth: { persistSession: false, autoRefreshToken: false },
   });
 }
@@ -79,14 +102,43 @@ export function createDb(env: Env, token: string, userId: string) {
     return {
       user_id: userId,
       linkedin_slug: c.slug,
-      name: c.name,
-      headline: c.headline,
-      snippet: c.snippet,
+      name: c.name.slice(0, FIELD_CHARS.name),
+      headline: c.headline.slice(0, FIELD_CHARS.headline),
+      snippet: c.snippet.slice(0, FIELD_CHARS.snippet),
       url: c.url,
     };
   }
 
   return {
+    /** Counts one use of `kind` unless a limit is already used up. */
+    async useQuota(kind: QuotaKind): Promise<QuotaResult> {
+      const { data, error } = await sb.rpc("use_quota", { p_kind: kind });
+      if (error) fail("useQuota", error);
+      return data as QuotaResult;
+    },
+
+    async lastSearch(): Promise<LastSearch> {
+      const { data, error } = await sb
+        .from("profiles")
+        .select("search_version, search_page, search_exhausted")
+        .maybeSingle();
+      if (error) fail("lastSearch", error);
+      return {
+        version: data?.search_version ?? null,
+        page: data?.search_page ?? 0,
+        exhausted: data?.search_exhausted ?? false,
+      };
+    },
+
+    async recordSearch(search: LastSearch & { version: number }): Promise<void> {
+      const { error } = await sb.rpc("record_search", {
+        p_version: search.version,
+        p_page: search.page,
+        p_exhausted: search.exhausted,
+      });
+      if (error) fail("recordSearch", error);
+    },
+
     async getState(): Promise<AppState> {
       const [docs, mentors] = await Promise.all([
         sb.from("documents").select("kind, filename, size_bytes, context, messages, updated_at"),
@@ -160,7 +212,7 @@ export function createDb(env: Env, token: string, userId: string) {
 
     /** Saves a note unless the document was re-uploaded since `updatedAt` (its note is then stale). */
     async saveNote(kind: UploadKind, updatedAt: string, context: string): Promise<void> {
-      const { error } = await sb.from("documents").update({ context }).eq("kind", kind).eq("updated_at", updatedAt);
+      const { error } = await sb.from("documents").update({ context: context.slice(0, MAX_NOTE_CHARS) }).eq("kind", kind).eq("updated_at", updatedAt);
       if (error) fail("saveNote", error);
     },
 
@@ -210,20 +262,28 @@ export function createDb(env: Env, token: string, userId: string) {
         user_id: userId,
         kind: "interview",
         filename: "interview",
-        messages,
+        messages: messages.map((m) => ({ ...m, content: m.content.slice(0, MAX_MESSAGE_CHARS) })),
         updated_at: new Date().toISOString(),
-        ...(summary !== undefined && { context: summary }),
+        ...(summary !== undefined && { context: summary.slice(0, MAX_NOTE_CHARS) }),
       });
       if (error) fail("saveInterview", error);
     },
 
-    /** Adds newly found people; anyone already in the table is left untouched. */
-    async insertCandidates(candidates: Candidate[]): Promise<void> {
-      if (!candidates.length) return;
-      const { error } = await sb
+    /**
+     * Adds newly found people and returns how many were new. Anyone already in the table is
+     * left untouched, and people past the per-user cap are skipped by a trigger.
+     */
+    async insertCandidates(candidates: Candidate[]): Promise<number> {
+      if (!candidates.length) return 0;
+      const { data, error } = await sb
         .from("mentors")
-        .upsert(candidates.map(candidateRow), { onConflict: "user_id,linkedin_slug", ignoreDuplicates: true });
+        .upsert(
+          candidates.filter((c) => c.slug.length <= MAX_SLUG_CHARS).map(candidateRow),
+          { onConflict: "user_id,linkedin_slug", ignoreDuplicates: true },
+        )
+        .select("linkedin_slug");
       if (error) fail("insertCandidates", error);
+      return data.length;
     },
 
     /** Unshown people not yet scored against the current context version. */
@@ -245,22 +305,43 @@ export function createDb(env: Env, token: string, userId: string) {
       }));
     },
 
+    /** Unshown people never scored at all (found by a run that didn't get to them). */
+    async unscored(limit: number): Promise<Candidate[]> {
+      const { data, error } = await sb
+        .from("mentors")
+        .select("linkedin_slug, name, headline, snippet, url")
+        .is("shown_at", null)
+        .is("scored_version", null)
+        .order("created_at", { ascending: false })
+        .limit(limit);
+      if (error) fail("unscored", error);
+      return data.map((r) => ({
+        slug: r.linkedin_slug,
+        name: r.name,
+        headline: r.headline,
+        snippet: r.snippet,
+        url: r.url,
+      }));
+    },
+
     async saveScores(version: number, scored: (Candidate & { score: number; reason: string })[]): Promise<void> {
       if (!scored.length) return;
       const { error } = await sb.from("mentors").upsert(
-        scored.map((c) => ({ ...candidateRow(c), score: c.score, reason: c.reason, scored_version: version })),
+        scored.map((c) => ({ ...candidateRow(c), score: c.score, reason: c.reason.slice(0, FIELD_CHARS.reason), scored_version: version })),
         { onConflict: "user_id,linkedin_slug" },
       );
       if (error) fail("saveScores", error);
     },
 
-    /** Best unshown mentors already scored for this context version. */
+    /** Best unshown mentors already scored for this context version, skipping anyone who matched nothing. */
     async unshownPool(version: number, limit: number): Promise<PoolMentor[]> {
       const { data, error } = await sb
         .from("mentors")
         .select("*")
         .is("shown_at", null)
         .eq("scored_version", version)
+        .gte("score", MIN_SCORE)
+        .neq("name", "")
         .order("score", { ascending: false })
         .limit(limit);
       if (error) fail("unshownPool", error);
@@ -270,19 +351,32 @@ export function createDb(env: Env, token: string, userId: string) {
     async saveBlurbs(version: number, mentors: Mentor[]): Promise<void> {
       if (!mentors.length) return;
       const { error } = await sb.from("mentors").upsert(
-        mentors.map((m) => ({ ...candidateRow(m), blurb: m.blurb, blurb_version: version })),
+        mentors.map((m) => ({ ...candidateRow(m), blurb: m.blurb.slice(0, FIELD_CHARS.blurb), blurb_version: version })),
         { onConflict: "user_id,linkedin_slug" },
       );
       if (error) fail("saveBlurbs", error);
     },
 
-    async markShown(slugs: string[]): Promise<void> {
-      if (!slugs.length) return;
-      const { error } = await sb
+    /**
+     * Marks people as shown and returns the slugs this call claimed. Anyone another tab's
+     * search already showed is left out, so two searches at once never return the same person.
+     */
+    async markShown(slugs: string[]): Promise<string[]> {
+      if (!slugs.length) return [];
+      const { data, error } = await sb
         .from("mentors")
         .update({ shown_at: new Date().toISOString() })
-        .in("linkedin_slug", slugs);
+        .in("linkedin_slug", slugs)
+        .is("shown_at", null)
+        .select("linkedin_slug");
       if (error) fail("markShown", error);
+      return data.map((r) => r.linkedin_slug as string);
+    },
+
+    /** Removes an uploaded document. Its context no longer counts, so scores are redone (trigger). */
+    async deleteDocument(kind: UploadKind): Promise<void> {
+      const { error } = await sb.from("documents").delete().eq("kind", kind);
+      if (error) fail("deleteDocument", error);
     },
   };
 }

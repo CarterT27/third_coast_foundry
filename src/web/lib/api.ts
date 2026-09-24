@@ -2,6 +2,7 @@
 // they never use fetch directly. Types come straight from the Worker's routes,
 // so a contract change shows up here as a type error.
 import { hc } from "hono/client";
+import type { z } from "zod";
 import {
   InterviewEvent,
   MentorsEvent,
@@ -10,6 +11,7 @@ import {
   type DocumentSummary,
   type Mentor,
   type UploadDocumentBody,
+  type UploadKind,
 } from "../../shared/schemas";
 import { readSSE } from "../../shared/sse";
 import type { AppType } from "../../worker/index";
@@ -21,6 +23,19 @@ const USE_FIXTURES = import.meta.env.PUBLIC_USE_FIXTURES === "true";
 const client = hc<AppType>(window.location.origin, {
   headers: async () => ({ Authorization: `Bearer ${await getAccessToken()}` }),
 }).api;
+
+/** Parses one stream event; a malformed one becomes a readable error instead of a validation dump. */
+function parseEvent<T extends z.ZodType>(schema: T, data: string): z.infer<T> {
+  let json: unknown;
+  try {
+    json = JSON.parse(data);
+  } catch {
+    json = undefined;
+  }
+  const result = schema.safeParse(json);
+  if (!result.success) throw new Error("Got an unexpected response from the server. Please try again.");
+  return result.data;
+}
 
 async function toError(res: Response): Promise<Error> {
   const body = (await res.json().catch(() => null)) as { error?: string } | null;
@@ -45,6 +60,16 @@ export async function uploadDocument(body: UploadDocumentBody): Promise<Document
   return res.json();
 }
 
+/** Removes an uploaded document. */
+export async function deleteDocument(kind: UploadKind): Promise<void> {
+  if (USE_FIXTURES) {
+    fixtureState.documents = fixtureState.documents.filter((d) => d.kind !== kind);
+    return;
+  }
+  const res = await client.documents[":kind"].$delete({ param: { kind } });
+  if (!res.ok) throw await toError(res);
+}
+
 /** Sends the conversation so far; calls onToken for each chunk of the interviewer's reply. */
 export async function sendInterviewMessage(messages: ChatMessage[], onToken: (text: string) => void): Promise<void> {
   if (USE_FIXTURES) {
@@ -63,7 +88,7 @@ export async function sendInterviewMessage(messages: ChatMessage[], onToken: (te
   const res = await client.interview.$post({ json: { messages } });
   if (!res.ok || !res.body) throw await toError(res);
   for await (const data of readSSE(res.body)) {
-    const event = InterviewEvent.parse(JSON.parse(data));
+    const event = parseEvent(InterviewEvent, data);
     if (event.type === "token") onToken(event.text);
     if (event.type === "error") throw new Error(event.message);
   }
@@ -98,7 +123,7 @@ export async function findMentors(onEvent: (event: MentorsProgress) => void): Pr
   const res = await client.mentors.$post();
   if (!res.ok || !res.body) throw await toError(res);
   for await (const data of readSSE(res.body)) {
-    const event = MentorsEvent.parse(JSON.parse(data));
+    const event = parseEvent(MentorsEvent, data);
     if (event.type === "error") throw new Error(event.message);
     if (event.type === "done") return event.mentors;
     onEvent(event);

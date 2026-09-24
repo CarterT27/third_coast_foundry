@@ -40,6 +40,23 @@ describe("nextTurn", () => {
     expect(system).toMatch(/Never show your reasoning/);
   });
 
+  it("caps a long history, keeping the newest turn and starting with a user turn", async () => {
+    vi.mocked(chatStream).mockImplementation(async function* () {
+      yield "ok";
+    });
+    const long = Array.from({ length: 60 }, (_, i) => ({
+      role: i % 2 === 0 ? ("assistant" as const) : ("user" as const),
+      content: `${i} ${"x".repeat(3900)}`,
+    }));
+    await collect(nextTurn(env, "CTX", long));
+    const [system, ...history] = vi.mocked(chatStream).mock.calls[0][1];
+    expect(history.length).toBeLessThan(long.length);
+    expect(history[0].role).toBe("user");
+    expect(history.at(-1)?.content).toBe(long.at(-1)?.content);
+    expect(JSON.stringify(history).length).toBeLessThan(25_000);
+    expect(system.content.length).toBeLessThan(30_000);
+  });
+
   it("lists the questions already asked so the model doesn't repeat them", async () => {
     vi.mocked(chatStream).mockImplementation(async function* () {
       yield "Which cities?";
@@ -123,6 +140,19 @@ describe("summarize rubric", () => {
     const note = await summarize(env, conversation);
     const points = [...note.matchAll(/\(up to (\d+)\)/g)].map((m) => Number(m[1]));
     expect(points.reduce((a, b) => a + b, 0)).toBe(100);
+  });
+
+  it("omits the rubric when the student named nothing concrete", async () => {
+    vi.mocked(chat).mockResolvedValue("Target industries: not discussed");
+    vi.mocked(chatJSON).mockImplementation(async (_env, _messages, schema) => schema.parse({ criteria: [], caps: [] }));
+    const note = await summarize(env, conversation);
+    expect(note).toBe("Target industries: not discussed");
+  });
+
+  it("throws if the summary is empty, so the interview isn't marked finished", async () => {
+    vi.mocked(chat).mockResolvedValue("```\n```");
+    vi.mocked(chatJSON).mockResolvedValue({ criteria: [], caps: [] });
+    await expect(summarize(env, conversation)).rejects.toThrow();
   });
 
   it("still returns the summary if the rubric call fails", async () => {
