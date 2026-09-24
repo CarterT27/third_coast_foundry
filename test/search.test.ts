@@ -11,7 +11,7 @@ vi.mock("../src/worker/lib/search-provider", () => ({ search: vi.fn() }));
 
 beforeEach(() => vi.resetAllMocks());
 
-describe.skip("buildXray", () => {
+describe("buildXray", () => {
   it("builds every part in order", () => {
     expect(
       buildXray({
@@ -37,7 +37,7 @@ describe.skip("buildXray", () => {
   });
 });
 
-describe.skip("parseResult", () => {
+describe("parseResult", () => {
   it("parses a standard profile result", () => {
     expect(
       parseResult({
@@ -66,7 +66,7 @@ describe.skip("parseResult", () => {
   });
 });
 
-describe.skip("runSearch", () => {
+describe("runSearch", () => {
   const result = (slug: string) => ({ title: `${slug} - PM | LinkedIn`, url: `https://www.linkedin.com/in/${slug}`, snippet: "" });
 
   it("runs all queries, drops non-profiles and dedupes by slug", async () => {
@@ -89,7 +89,7 @@ describe.skip("runSearch", () => {
   });
 });
 
-describe.skip("generateQueries", () => {
+describe("generateQueries", () => {
   it("returns unique X-ray strings, capped at MAX_QUERIES", async () => {
     const spec = (title: string) => ({ titles: [title], keywords: [], companies: [], schools: [] });
     const specs = [spec("pm"), spec("pm"), ...Array.from({ length: 15 }, (_, i) => spec(`role ${i}`))];
