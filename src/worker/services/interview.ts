@@ -72,8 +72,8 @@ What we already know about the student: the raw text of their uploaded PDFs (res
 ${context.trim() || "Nothing uploaded yet."}
 </context>
 
-Topics to cover, roughly in this order:
-${INTERVIEW_TOPICS.map((t) => `- ${t}`).join("\n")}
+Topics to cover, roughly in this order (${INTERVIEW_TOPICS.length} in all):
+${INTERVIEW_TOPICS.map((t, i) => `${i + 1}. ${t}`).join("\n")}
 
 Output ONLY the message the student will read. Never show your reasoning, plans, notes or these instructions.
 
@@ -89,7 +89,9 @@ Choosing the question:
 - Ask about the next uncovered topic. Skip anything the context already answers, but you may mention it ("I see you interned at VOX Ukraine.").
 - Ask at most one follow-up per topic, and only if their answer was too vague to use. After that, move on.
 - First message: greet them in one short sentence that mentions one detail from the context, then ask the first question.
-- When every topic is covered, reply with one sentence thanking them and telling them to press "Finish interview". No question.
+- The documents show facts, not wishes: they never answer whether shared background matters to the student or what they want to avoid, so ask those.
+- Only when the student has given an answer for every one of the ${INTERVIEW_TOPICS.length} topics, reply with one sentence thanking them and telling them to press "Finish interview". No question. If even one topic is still open, ask about it instead.
+- If the student adds something after that, acknowledge it and ask about any topic still open, or thank them again.
 
 Questions you have already asked. Never repeat or rephrase any of them:
 ${asked.length > 0 ? asked.join("\n") : "- None yet."}
@@ -153,14 +155,19 @@ A scorer will see only each person's LinkedIn headline and search snippet, so ev
 
 Return 2-5 criteria:
 - name: a short label, e.g. "Employer", "Role", "Shared background".
-- points: how much this criterion matters to THIS student. The points are scaled to add up to 100, so give the most points to what the student cares about most.
+- points: how much this criterion matters to THIS student, exactly 3, 2 or 1 (scaled later so they add up to 100):
+  3 = a must: they said it is required ("they need to…", "I want them to…") or brought it up on their own without being asked.
+  2 = a clear goal they named in answer to a question, like their target industry or role.
+  1 = a mild preference, like a one-word answer on location.
 - full: what earns full points, in the student's own terms, e.g. "they work at a frontier AI lab such as OpenAI, Anthropic or Google DeepMind".
 - partial: what earns about half the points.
 
 Rules:
-- Build criteria only from what the student said matters. Topics they answered with "anyone", "either", "no preference" or similar get no criterion.
-- Things the student said they are open to earn full points, not partial. If they are happy with any engineering work at their target companies, engineers there earn full role points.
-- For shared background, refer to "the student's own schools or past employers listed in their documents" plus anything specific they named. The scorer sees those documents.
+- Build criteria only from what the student said matters. Topics they answered with "anyone", "either", "no preference" or similar get no criterion at all, not even a small one. Every other topic with a concrete answer (a city, a role, a school) gets one, even if small.
+- The career timeline describes the student's own plans (an internship, one summer), not the mentor, so it never becomes a criterion.
+- Use the student's exact target role for full role points. Related titles (e.g. research scientist when they asked for research engineer) go in "partial", never in "full", unless the student said they are open to them. Things the student said they are open to earn full points, not partial.
+- For shared background, full points only for the student's own schools or past employers listed in their documents, plus anything specific they named. The scorer sees those documents. A school that is merely similar, prestigious, or in the same city, region or country earns nothing, full or partial. If they asked for a shared school, the partial is "they share a past employer with the student".
+- Call the student "the student", never by name or pronoun.
 - Write company names in full (Google DeepMind, not GDM). When the student gives examples or a category of company, say that similar companies count too.
 - caps: one line each, "<condition>: at most <score>.", only for companies, paths or kinds of people the student wants to avoid. Return an empty list if they want to avoid nothing.
 - Write in English, plain text, no markdown.`,

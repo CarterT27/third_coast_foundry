@@ -54,6 +54,16 @@ describe("nextTurn", () => {
     expect(system).toMatch(/Never repeat or rephrase/);
     expect(system).toContain("- What seniority level would be most helpful?");
   });
+
+  it("only lets the model wrap up once every topic is answered, and says documents don't answer wishes", async () => {
+    vi.mocked(chatStream).mockImplementation(async function* () {
+      yield "Which cities?";
+    });
+    await collect(nextTurn(env, "CTX", []));
+    const system = vi.mocked(chatStream).mock.calls[0][1][0].content;
+    expect(system).toMatch(/answer for every one of the \d+ topics/);
+    expect(system).toMatch(/never answer whether shared background matters/);
+  });
 });
 
 describe("summarize", () => {
@@ -91,6 +101,17 @@ describe("summarize rubric", () => {
     expect(note).toMatch(/Recruiters.*at most 10/);
     expect(note).toContain("Works at Palantir: at most 15.");
     expect(JSON.stringify(vi.mocked(chatJSON).mock.calls[0][1])).toContain("Frontier AI labs");
+  });
+
+  it("asks for importance levels and exact-school matches so a shared school isn't outweighed by a city", async () => {
+    vi.mocked(chat).mockResolvedValue("summary");
+    vi.mocked(chatJSON).mockResolvedValue({ criteria: [], caps: [] });
+    await summarize(env, conversation);
+    const system = vi.mocked(chatJSON).mock.calls[0][1][0].content;
+    expect(system).toMatch(/exactly 3, 2 or 1/);
+    expect(system).toMatch(/brought it up on their own/);
+    expect(system).toMatch(/merely similar, prestigious, or in the same city, region or country earns nothing/);
+    expect(system).toMatch(/career timeline .* never becomes a criterion/);
   });
 
   it("keeps points summing to exactly 100 after rounding", async () => {

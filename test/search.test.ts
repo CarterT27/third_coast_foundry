@@ -108,4 +108,20 @@ describe("generateQueries", () => {
     expect(user).toMatch(/<preferences>\nTarget industries: frontier AI\n<\/preferences>/);
     expect(user).toMatch(/<documents>\n## RESUME \(cv.pdf\)\nIntern at Optiver\n<\/documents>/);
   });
+
+  it("keeps at most two filters besides titles, preferring school and companies", async () => {
+    vi.mocked(chatJSON).mockResolvedValue({
+      specs: [
+        {
+          titles: ["engineer"],
+          keywords: ["AI"],
+          companies: ["OpenAI", "Anthropic"],
+          schools: ["University of Chicago"],
+          location: "San Francisco",
+        },
+      ],
+    });
+    const [query] = await generateQueries(env, "context");
+    expect(query).toBe('site:linkedin.com/in ("engineer") ("OpenAI" OR "Anthropic") ("University of Chicago")');
+  });
 });

@@ -51,8 +51,12 @@ export async function scoreBatch(env: Env, context: string, candidates: Candidat
 
 // Looser than the shared Score so an out-of-range or fractional score doesn't fail the
 // whole batch; requestScores rounds and clamps it instead.
+// `points` is the model's working (points per criterion, then caps), written before the
+// score so the total follows from it; it isn't stored.
 const RawScores = z.object({
-  scores: z.array(z.object({ slug: z.string(), score: z.number(), reason: z.string() })),
+  scores: z.array(
+    z.object({ slug: z.string(), points: z.string().optional(), score: z.number(), reason: z.string() }),
+  ),
 });
 
 /** One LLM call; returns scores keyed by slug, only for the given candidates. */
@@ -81,10 +85,12 @@ Reading a profile:
 
 How to score:
 - Go through the criteria one by one and award full, about half, or 0 points using only that evidence. If the evidence isn't there, award 0 for that criterion; never assume.
-- Add the points up, then apply any cap that matches. The result is a whole number from 0 to 100.
+- Write that working in "points" first, e.g. "Employer 40 + Role 12 + Shared background 0 + Location 10 = 62; no cap". Then "score" is exactly that total after any cap: a whole number from 0 to 100.
+- The "too little information" cap applies only when you can't tell their employer or their role at all.
 - A score of 90 or more needs full points on the criteria worth the most AND at least half on every other criterion. Being at the right company alone never reaches 90 when the rubric also rewards role or shared background.
 - Score each person on the rubric alone, never relative to the others in the list.
-- The reason is one sentence naming only the criteria this person actually earned points for, quoting the evidence (e.g. "Research Engineer at Google DeepMind; ex-Palantir like the student"). Don't restate the rubric's wording or claim a match the profile doesn't show.
+- The reason is one sentence naming only the criteria this person actually earned points for, quoting the evidence (e.g. "Research Engineer at Google DeepMind; ex-Palantir like the student"). Don't restate the rubric's wording, mention points or arithmetic, or claim a match the profile doesn't show.
+- Return each entry as {"slug", "points", "score", "reason"}, in that order.
 - Use only facts in the student's information and the profile. Never invent employers, titles or schools.
 - Return exactly one entry per person, using the slug exactly as given.
 

@@ -126,7 +126,7 @@ export async function generateQueries(env: Env, context: string): Promise<string
 
 Return ${MAX_QUERIES} search specs. Each spec becomes one Google-style query restricted to LinkedIn profiles:
 - titles: 1-3 job titles, OR'd together (e.g. "product manager", "PM").
-- keywords: 0-1 term that must appear (usually the industry, e.g. fintech). Every keyword narrows the results a lot.
+- keywords: usually empty. At most 1 term that literally appears on people's profiles (e.g. fintech). Never a descriptive phrase like "frontier AI" or "early-stage": profiles don't say that, so the query finds nobody.
 - companies: 0-4 real company names, OR'd together. Never a description like "Chicago startup".
 - schools: 0-2 schools, OR'd together (the student's own school finds alumni).
 - location: one city or region, only if the student cares about location.
@@ -134,7 +134,7 @@ Return ${MAX_QUERIES} search specs. Each spec becomes one Google-style query res
 The student's interview preferences are what they want; their documents are background. When the two conflict, follow the preferences. The scoring rubric shows what matters most to them, so aim most specs at the criteria worth the most points.
 
 Vary the angles across specs:
-- alumni of the student's school in their target roles
+- alumni of the student's school in their target roles (if a shared school matters to the student, give at least 3 specs with the school)
 - people at the student's past employers (from their documents) who now hold target roles, or target companies' people who list those employers
 - target companies × target roles
 - adjacent roles in the target industry, especially ones the student said they are open to
@@ -147,7 +147,8 @@ Rules:
 - Write company and school names in full, the way they appear on LinkedIn: "Google DeepMind", never "GDM"; "University of Chicago", never "UChicago".
 - Match titles to what they asked for, including the exact titles people in that field use (e.g. "member of technical staff" at AI labs). If they gave a seniority preference, use titles at that level; if not, don't.
 - Only set location when the student wants one or two specific places and doesn't accept remote. Otherwise leave it out.
-- Keep each spec broad enough to return results: besides titles, fill in at most 2 fields.
+- Search results rarely show a school next to an exact job title, so specs with a school must use broad one-word titles ("engineer", "research", "researcher") plus the target companies, and no location.
+- Keep each spec broad enough to return results: besides titles, fill in at most 2 of keywords, companies, schools and location. Never 3 or more.
 - Skip companies or paths the student wants to avoid.
 - Every spec must be different.`,
       },
@@ -168,7 +169,21 @@ ${documents || "No documents yet."}
     ],
     z.object({ specs: z.array(XraySpec) }),
   );
-  const queries = [...new Set(specs.map(buildXray))].slice(0, MAX_QUERIES);
+  const queries = [...new Set(specs.map((spec) => buildXray(narrowest(spec))))].slice(0, MAX_QUERIES);
   if (queries.length === 0) throw new Error("The LLM returned no search queries");
   return queries;
+}
+
+/** Filters besides titles kept per query; every extra one shrinks the results a lot. */
+const MAX_FILTERS = 2;
+
+/** Keeps the MAX_FILTERS most useful filters, in the order schools, companies, location, keywords. */
+function narrowest(spec: XraySpec): XraySpec {
+  let left = MAX_FILTERS;
+  const keep = (has: boolean) => has && left-- > 0;
+  const schools = keep(spec.schools.length > 0) ? spec.schools : [];
+  const companies = keep(spec.companies.length > 0) ? spec.companies : [];
+  const location = keep(Boolean(spec.location)) ? spec.location : undefined;
+  const keywords = keep(spec.keywords.length > 0) ? spec.keywords.slice(0, 1) : [];
+  return { titles: spec.titles, keywords, companies, schools, location };
 }
