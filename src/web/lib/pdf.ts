@@ -4,8 +4,8 @@
 /** Returns the PDF's text, or "" for scanned/image-only PDFs. */
 export async function extractPdfText(file: File): Promise<string> {
   const [{ getDocument, GlobalWorkerOptions }, { default: workerUrl }] = await Promise.all([
-    import("pdfjs-dist"),
-    import("pdfjs-dist/build/pdf.worker.min.mjs?url"),
+    import("pdfjs-dist/legacy/build/pdf.mjs"),
+    import("pdfjs-dist/legacy/build/pdf.worker.min.mjs?url"),
   ]);
   GlobalWorkerOptions.workerSrc = workerUrl;
 
