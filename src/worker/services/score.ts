@@ -4,11 +4,23 @@ import { z } from "zod";
 import type { Candidate, Score } from "../../shared/schemas";
 import type { Env } from "../env";
 import { chatJSON } from "../lib/llm";
+import { splitContext } from "./interview";
+
+/** Used until the student finishes the interview, which writes their own rubric. */
+const DEFAULT_RUBRIC = `- Role (up to 35): full points if they work in the student's target role; about half if in a closely related role; otherwise 0.
+- Industry and employer (up to 35): full points if they work in the student's target industry or at a target company; about half if in an adjacent industry; otherwise 0.
+- Shared background (up to 20): full points if they share a school or past employer with the student; about half if they share a city or affinity group; otherwise 0.
+- Stage (up to 10): full points if they are a few years ahead on the path the student wants; about half if they are much more senior; otherwise 0.
+Caps (these override the points):
+- Recruiters, talent acquisition or HR staff, and current students: at most 10.
+- Too little information in the headline and snippet to judge: at most 20.`;
 
 /**
  * Scores one batch (≤ SCORE_BATCH_SIZE) of candidates against the user's context
- * with a fixed rubric. pipeline.ts calls this once per batch, in parallel, and ranks
- * everything by score — so scores from different batches must mean the same thing.
+ * with the student's own rubric (written once by summarize and stored in the interview
+ * note; DEFAULT_RUBRIC until then). pipeline.ts calls this once per batch, in parallel,
+ * and ranks everything by score — so scores from different batches must mean the same
+ * thing, which is why the rubric is read from context rather than written per batch.
  *
  * Contract:
  * - Returns exactly one Score per input candidate, matched by `slug`.
@@ -18,9 +30,8 @@ import { chatJSON } from "../lib/llm";
  *
  * Hints:
  * - `import { chatJSON } from "../lib/llm"` with `z.object({ scores: z.array(Score) })`.
- * - Keep batches consistent with a rubric that anchors each band with examples, e.g.
- *   90+ = target role AND industry AND shared school; 70 = target role, adjacent
- *   industry; 40 = related field only; <20 = recruiter/student/unrelated.
+ * - The rubric is points per criterion summing to 100, plus caps (recruiters, students,
+ *   anything the student wants to avoid), so a score means the same in every batch.
  * - temperature 0 (chatJSON's default).
  */
 export async function scoreBatch(env: Env, context: string, candidates: Candidate[]): Promise<Score[]> {
@@ -49,31 +60,35 @@ async function requestScores(env: Env, context: string, candidates: Candidate[])
   const list = candidates
     .map((c) => `slug: ${c.slug}\nname: ${c.name}\nheadline: ${c.headline}\nsnippet: ${c.snippet}`)
     .join("\n\n");
+  const { preferences, rubric, documents } = splitContext(context);
   const { scores } = await chatJSON(
     env,
     [
       {
         role: "system",
-        content: `You score LinkedIn profiles as potential mentors for a student, using a fixed rubric.
+        content: `You score LinkedIn profiles as potential mentors for one student, using that student's own rubric.
 
-Rubric (absolute, the same for every list you see):
-- 90-100: works in the student's target role AND target industry, AND shares a school or background with them.
-- 70-89: target role in an adjacent industry, or target industry in a closely related role.
-- 40-69: related field only, e.g. a similar function in an unrelated industry, or a different function (like engineering) in the target industry.
-- 20-39: weak connection to the student's goals.
-- 0-19: recruiter, current student, unrelated field, or too little information to judge.
+<rubric>
+${rubric || DEFAULT_RUBRIC}
+</rubric>
 
-Rules:
+How to score:
+- Go through the criteria one by one and award full, about half, or 0 points using only evidence in that person's headline and snippet. If the evidence isn't there, award 0 for that criterion; never assume.
+- Add the points up, then apply any cap that matches. The result is a whole number from 0 to 100.
 - Score each person on the rubric alone, never relative to the others in the list.
-- The score is a whole number from 0 to 100.
-- The reason is one sentence citing evidence from that person's headline or snippet.
-- Use only facts in the student's context and the profile. Never invent employers, titles or schools.
+- The reason is one sentence citing the evidence from their headline or snippet that earned the most points.
+- Use only facts in the student's information and the profile. Never invent employers, titles or schools.
 - Return exactly one entry per person, using the slug exactly as given.
 
-The student's context:
-<context>
-${context.trim() || "Nothing known yet."}
-</context>`,
+What the student said they want in the interview. Where it conflicts with their documents, this wins:
+<preferences>
+${preferences || "No interview yet."}
+</preferences>
+
+Background from the student's documents (use it for shared schools and past employers):
+<documents>
+${documents || "Nothing known yet."}
+</documents>`,
       },
       { role: "user", content: list },
     ],

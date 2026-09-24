@@ -76,4 +76,22 @@ describe("scoreBatch", () => {
     expect(scores.map((s) => s.score)).toEqual([100, 88, 0]);
     expect(scores[0].reason).toBe("Too high");
   });
+
+  it("scores with the student's own rubric when the interview wrote one", async () => {
+    vi.mocked(chatJSON).mockResolvedValue({ scores: [] });
+    const context =
+      "## RESUME (cv.pdf)\nIntern at Optiver\n\n## INTERVIEW (interview)\nTarget industries: AI\n\nSCORING RUBRIC (points add up to 100)\n- UNIQUE_CRITERION (up to 100): ...";
+    await scoreBatch(env, context, [candidate("a")]);
+    const system = vi.mocked(chatJSON).mock.calls[0][1][0].content;
+    expect(system).toContain("UNIQUE_CRITERION");
+    expect(system).not.toContain("Stage (up to 10)");
+    expect(system).toMatch(/<preferences>\nTarget industries: AI\n<\/preferences>/);
+    expect(system).toContain("Intern at Optiver");
+  });
+
+  it("falls back to the default rubric before the interview is finished", async () => {
+    vi.mocked(chatJSON).mockResolvedValue({ scores: [] });
+    await scoreBatch(env, "## RESUME (cv.pdf)\nIntern at Optiver", [candidate("a")]);
+    expect(vi.mocked(chatJSON).mock.calls[0][1][0].content).toContain("Stage (up to 10)");
+  });
 });

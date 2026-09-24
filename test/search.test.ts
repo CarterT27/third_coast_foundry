@@ -100,4 +100,12 @@ describe("generateQueries", () => {
     expect(new Set(queries).size).toBe(queries.length);
     expect(queries.every((q) => q.startsWith("site:linkedin.com/in"))).toBe(true);
   });
+
+  it("gives the model the interview preferences apart from the documents", async () => {
+    vi.mocked(chatJSON).mockResolvedValue({ specs: [{ titles: ["research engineer"], keywords: [], companies: [], schools: [] }] });
+    await generateQueries(env, "## RESUME (cv.pdf)\nIntern at Optiver\n\n## INTERVIEW (interview)\nTarget industries: frontier AI");
+    const user = vi.mocked(chatJSON).mock.calls[0][1][1].content;
+    expect(user).toMatch(/<preferences>\nTarget industries: frontier AI\n<\/preferences>/);
+    expect(user).toMatch(/<documents>\n## RESUME \(cv.pdf\)\nIntern at Optiver\n<\/documents>/);
+  });
 });

@@ -6,6 +6,7 @@ import { type Candidate, MAX_QUERIES, XraySpec } from "../../shared/schemas";
 import type { Env } from "../env";
 import { chatJSON } from "../lib/llm";
 import { search, type SearchResult } from "../lib/search-provider";
+import { splitContext } from "./interview";
 
 /**
  * Turns one spec into a Google/Brave "X-ray" query restricted to LinkedIn profiles.
@@ -115,6 +116,7 @@ export async function runSearch(env: Env, queries: string[]): Promise<Candidate[
  * `z.object({ specs: z.array(XraySpec) })` as the schema, then map through buildXray.
  */
 export async function generateQueries(env: Env, context: string): Promise<string[]> {
+  const { preferences, rubric, documents } = splitContext(context);
   const { specs } = await chatJSON(
     env,
     [
@@ -129,20 +131,40 @@ Return ${MAX_QUERIES} search specs. Each spec becomes one Google-style query res
 - schools: 0-2 schools, OR'd together (the student's own school finds alumni).
 - location: one city or region, only if the student cares about location.
 
+The student's interview preferences are what they want; their documents are background. When the two conflict, follow the preferences. The scoring rubric shows what matters most to them, so aim most specs at the criteria worth the most points.
+
 Vary the angles across specs:
 - alumni of the student's school in their target roles
+- people at the student's past employers (from their documents) who now hold target roles, or target companies' people who list those employers
 - target companies × target roles
-- adjacent roles in the target industry
+- adjacent roles in the target industry, especially ones the student said they are open to
 - people who made the same career switch or took the same path
 - the target role in the preferred location
 
 Rules:
-- Use only facts from the student's context. Don't invent schools, companies or goals.
+- Use only facts from the student's information. Don't invent schools, past employers or goals.
+- You may add well-known real companies that clearly fit what the student described. If they give examples ("labs like OpenAI") or a category ("AI inference startups"), include similar companies in that category, not only the ones named.
+- Write company and school names in full, the way they appear on LinkedIn: "Google DeepMind", never "GDM"; "University of Chicago", never "UChicago".
+- Match titles to what they asked for, including the exact titles people in that field use (e.g. "member of technical staff" at AI labs). If they gave a seniority preference, use titles at that level; if not, don't.
+- Only set location when the student wants one or two specific places and doesn't accept remote. Otherwise leave it out.
 - Keep each spec broad enough to return results: besides titles, fill in at most 2 fields.
 - Skip companies or paths the student wants to avoid.
 - Every spec must be different.`,
       },
-      { role: "user", content: context.trim() || "No context yet." },
+      {
+        role: "user",
+        content: `<preferences>
+${preferences || "No interview yet."}
+</preferences>
+
+<rubric>
+${rubric || "None yet."}
+</rubric>
+
+<documents>
+${documents || "No documents yet."}
+</documents>`,
+      },
     ],
     z.object({ specs: z.array(XraySpec) }),
   );
