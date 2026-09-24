@@ -1,25 +1,45 @@
-// Live red-team checks against a deployed site: real Supabase, LLM and Brave calls.
-// Skipped unless LIVE=1, so `npm test` and CI never run them.
+// Live red-team checks with real LLM and Brave calls. Skipped unless LIVE is set, so
+// `npm test` and CI never run them.
 //
-//   LIVE=1 npx vitest run test/live.test.ts
+//   LIVE=1 npx vitest run test/live.test.ts --testTimeout=600000
+//     Drives a deployed site (LIVE_BASE_URL, default production; http://localhost:5173 for
+//     `npm run dev`) with real Supabase. Each run makes 3 fresh anonymous users and spends 3 of
+//     the site's 10 searches per day.
+//   LIVE=local npx vitest run test/live.test.ts --testTimeout=600000
+//     Runs the same steps as pipeline.findMentors in-process with the services in this
+//     checkout: no Supabase and no site quota, only LLM calls and ~30 Brave queries.
 //
-// Optional: LIVE_BASE_URL (defaults to production). Supabase URL and publishable key come
-// from the environment or .env. Each run makes 3 fresh anonymous users and spends 3 of the
-// site's 10 searches per day. Each scenario's full run (rubric, queries, every score,
-// the mentors and blurbs) is printed as JSON so a failure can be reproduced by hand.
+// Keys and URLs come from the environment or .env. Each scenario's full run (rubric, queries,
+// every score, the mentors and blurbs) is printed as JSON so a failure can be reproduced by hand.
 //
 // Each scenario asserts what the user should get, so a failure is a wrong answer to fix.
 import { loadEnv } from "vite";
 import { beforeAll, describe, expect, it } from "vitest";
-import { MentorsEvent, type ChatMessage, type Mentor, type UploadKind } from "../src/shared/schemas";
+import {
+  MAX_SCORE_PER_RUN,
+  MentorsEvent,
+  SCORE_BATCH_SIZE,
+  TOP_N,
+  type Candidate,
+  type ChatMessage,
+  type Mentor,
+  type UploadKind,
+} from "../src/shared/schemas";
 import { readSSE } from "../src/shared/sse";
+import type { Env } from "../src/worker/env";
+import { writeBlurbs } from "../src/worker/services/blurbs";
+import { extractContext } from "../src/worker/services/documents";
+import { summarize } from "../src/worker/services/interview";
+import { scoreBatch } from "../src/worker/services/score";
+import { generateQueries, runSearch } from "../src/worker/services/search";
 
-const LIVE = process.env.LIVE === "1";
+const LIVE = process.env.LIVE === "1" || process.env.LIVE === "local";
+const LOCAL = process.env.LIVE === "local";
 const BASE_URL = process.env.LIVE_BASE_URL ?? "https://third-coast-foundry.carter-tran.workers.dev";
 const RUN_TIMEOUT = 600_000;
 
 type Persona = { docs: Partial<Record<UploadKind, string>>; interview: [question: string, answer: string][] };
-type Scored = { slug: string; name: string; headline: string; score: number };
+type Scored = { slug: string; name: string; headline: string; snippet?: string; score: number };
 type Run = { rubric: string; queries: string[]; mentors: Mentor[]; scored: Scored[] };
 
 // ─── Personas ────────────────────────────────────────────────────────────────
@@ -91,14 +111,17 @@ type ScenarioName = keyof typeof PERSONAS;
 const text = (m: { headline: string; snippet?: string }) => `${m.headline} ${m.snippet ?? ""}`;
 const QUANT_FIRM =
   /Citadel|Jane Street|Two Sigma|Hudson River|Jump Trading|XTX|D\.? ?E\.? Shaw|Susquehanna|\bSIG\b|Optiver|\bIMC\b|Tower Research|Renaissance|Millennium|\bDRW\b|Five Rings|Virtu/i;
-const ML = /machine learning|\bML\b|deep learning|\bAI\b|artificial intelligence|neural/i;
+const ML = /machine learning|\bML\b|deep learning|\bAI\b|artificial intelligence|neural|\bLLMs?\b|reinforcement learning|statistical learning/i;
 const SENIOR = /managing director|\bMD\b|head of|partner|director|chief|\bVP\b|vice president|principal/i;
 const ENERGY_TRADING = /trad(er|ing)|\bpower\b|natural gas|\bgas\b|energy|commodit/i;
-const HOUSTON = /Houston|Sugar Land|Katy|Woodlands|Pearland/i;
+const HOUSTON = /Houston|Sugar Land|Katy|Woodlands|Pearland|Conroe|Spring|Cypress|Humble|Tomball|Pasadena|Baytown|League City|Missouri City|Bellaire/i; // Greater Houston
 const STUDENT = /\b(student|undergrad(uate)?|phd candidate|class of 20\d\d)\b/i;
 const EDU_EMAIL = /[\w.+-]+@[\w-]+(\.[\w-]+)*\.edu\b/i;
 const GENDERED = /\b(he|she|him|her|his|hers|himself|herself)\b/i;
 
+/** A senior title, or 15+ years of experience in the snippet (the persona asks for either). */
+const isSenior = (m: { headline: string; snippet?: string }) =>
+  SENIOR.test(m.headline) || /\b(1[5-9]|[2-9]\d)\+? years\b/i.test(m.snippet ?? "");
 const isStudent = (m: Mentor) => STUDENT.test(m.headline) || EDU_EMAIL.test(m.snippet);
 /** Nothing but a location or "Professional Profile" in the headline, and no Experience field. */
 const isBlank = (m: Mentor) => !/Experience:/.test(m.snippet) && /Professional Profile|^[^|]*,\s*United States\s*$/i.test(m.headline);
@@ -112,7 +135,7 @@ const rubricCaps = (rubric: string) => rubric.slice(rubric.indexOf("Caps")).spli
 
 // ─── Driving the site ────────────────────────────────────────────────────────
 function envValue(name: string): string {
-  const value = process.env[name] ?? loadEnv("", process.cwd(), "PUBLIC_")[name];
+  const value = process.env[name] ?? loadEnv("", process.cwd(), "")[name];
   if (!value) throw new Error(`${name} missing from the environment and .env`);
   return value;
 }
@@ -122,7 +145,55 @@ async function ok(res: Response): Promise<Response> {
   return res;
 }
 
+const toMessages = (persona: Persona): ChatMessage[] =>
+  persona.interview.flatMap(([q, a]) => [
+    { role: "assistant" as const, content: q },
+    { role: "user" as const, content: a },
+  ]);
+
+/** pipeline.findMentors for a first search, without the database. */
+async function runInProcess(name: ScenarioName): Promise<Run> {
+  const persona: Persona = PERSONAS[name];
+  const env: Env = {
+    PUBLIC_SUPABASE_URL: "",
+    PUBLIC_SUPABASE_PUBLISHABLE_KEY: "",
+    LLM_PROVIDER: envValue("LLM_PROVIDER"),
+    NVIDIA_API_KEY: envValue("NVIDIA_API_KEY"),
+    NVIDIA_MODEL: envValue("NVIDIA_MODEL"),
+    OPENROUTER_API_KEY: envValue("OPENROUTER_API_KEY"),
+    OPENROUTER_MODEL: envValue("OPENROUTER_MODEL"),
+    BRAVE_API_KEY: envValue("BRAVE_API_KEY"),
+  };
+  const docs = Object.entries(persona.docs) as [UploadKind, string][];
+  const [notes, summary] = await Promise.all([
+    Promise.all(docs.map(async ([kind, text]) => `## ${kind.toUpperCase()} (${kind}.pdf)\n${await extractContext(env, kind, text)}`)),
+    summarize(env, toMessages(persona)),
+  ]);
+  const context = [...notes, `## INTERVIEW (interview)\n${summary}`].join("\n\n");
+
+  const queries = await generateQueries(env, context);
+  const found = await Promise.all(queries.map((q) => runSearch(env, [q]).catch(() => [] as Candidate[])));
+  const bySlug = new Map<string, Candidate>();
+  for (const c of found.flat()) if (!bySlug.has(c.slug)) bySlug.set(c.slug, c);
+  const candidates = [...bySlug.values()].slice(0, MAX_SCORE_PER_RUN);
+
+  const batches: Candidate[][] = [];
+  for (let i = 0; i < candidates.length; i += SCORE_BATCH_SIZE) batches.push(candidates.slice(i, i + SCORE_BATCH_SIZE));
+  const scores = (await Promise.all(batches.map((b) => scoreBatch(env, context, b)))).flat();
+  const scored = scores
+    .map((s) => ({ ...bySlug.get(s.slug)!, score: s.score, reason: s.reason }))
+    .sort((a, b) => b.score - a.score);
+  const pool = scored.filter((m) => m.score >= 1).slice(0, TOP_N);
+  const blurbs = new Map((await writeBlurbs(env, context, pool.map((m) => ({ ...m, blurb: "" })))).map((b) => [b.slug, b.blurb]));
+
+  const rubric = context.slice(Math.max(0, context.indexOf("SCORING RUBRIC")));
+  const run: Run = { rubric, queries, mentors: pool.map((m) => ({ ...m, blurb: blurbs.get(m.slug) ?? "" })), scored };
+  process.stdout.write(`── ${name} ──\n${JSON.stringify(run, null, 2)}\n`); // console.log is hidden for passing tests
+  return run;
+}
+
 async function runScenario(name: ScenarioName): Promise<Run> {
+  if (LOCAL) return runInProcess(name);
   const persona: Persona = PERSONAS[name];
   const supabase = envValue("PUBLIC_SUPABASE_URL");
   const apikey = envValue("PUBLIC_SUPABASE_PUBLISHABLE_KEY");
@@ -136,10 +207,7 @@ async function runScenario(name: ScenarioName): Promise<Run> {
     const doc = { kind, filename: `${kind}.pdf`, sizeBytes: body.length, text: body };
     await ok(await fetch(`${BASE_URL}/api/documents`, { method: "POST", headers, body: JSON.stringify(doc) }));
   }
-  const messages: ChatMessage[] = persona.interview.flatMap(([q, a]) => [
-    { role: "assistant" as const, content: q },
-    { role: "user" as const, content: a },
-  ]);
+  const messages = toMessages(persona);
   await ok(await fetch(`${BASE_URL}/api/interview/finish`, { method: "POST", headers, body: JSON.stringify({ messages }) }));
 
   const notes = await ok(
@@ -161,7 +229,7 @@ async function runScenario(name: ScenarioName): Promise<Run> {
   }
   run.scored.sort((a, b) => b.score - a.score);
 
-  console.log(`── ${name} ──\n${JSON.stringify(run, null, 2)}`);
+  process.stdout.write(`── ${name} ──\n${JSON.stringify(run, null, 2)}\n`); // console.log is hidden for passing tests
   return run;
 }
 
@@ -203,10 +271,12 @@ describe.skipIf(!LIVE)("live red-team scenarios", () => {
   });
 
   it("seniority named as most important: no junior outscores the best senior leader", () => {
-    const { scored } = runs.seniorLeaders;
-    const bestSenior = scored.find((s) => SENIOR.test(s.headline));
+    // Stream events carry no snippet; the returned mentors do.
+    const snippets = new Map(runs.seniorLeaders.mentors.map((m) => [m.slug, m.snippet]));
+    const scored = runs.seniorLeaders.scored.map((s) => ({ ...s, snippet: s.snippet ?? snippets.get(s.slug) }));
+    const bestSenior = scored.find(isSenior);
     expect(bestSenior, `no senior leader was scored at all:\n${describePeople(scored)}`).toBeDefined();
-    const above = scored.filter((s) => !SENIOR.test(s.headline) && s.score > bestSenior!.score);
+    const above = scored.filter((s) => !isSenior(s) && s.score > bestSenior!.score);
     expect(above, `outscore ${bestSenior!.name} (${bestSenior!.score}):\n${describePeople(above)}`).toEqual([]);
   });
 

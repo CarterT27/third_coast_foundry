@@ -22,7 +22,7 @@ import { chatJSON } from "../lib/llm";
 export async function writeBlurbs(env: Env, context: string, mentors: Mentor[]): Promise<Blurb[]> {
   if (mentors.length === 0) return [];
   const bySlug = await requestBlurbs(env, context, mentors);
-  // The model occasionally skips someone; ask once more for just those.
+  // The model occasionally skips someone or guesses a pronoun; ask once more for just those.
   const missing = mentors.filter((m) => !bySlug.get(m.slug));
   if (missing.length > 0) {
     for (const [slug, blurb] of await requestBlurbs(env, context, missing)) bySlug.set(slug, blurb);
@@ -31,7 +31,10 @@ export async function writeBlurbs(env: Env, context: string, mentors: Mentor[]):
   return mentors.map((m) => ({ slug: m.slug, blurb: bySlug.get(m.slug) || m.reason }));
 }
 
-/** One LLM call; returns non-empty blurbs keyed by slug, only for the given mentors. */
+/** "he", "she" and the like, which the blurb must never guess from a name. */
+const GENDERED = /\b(he|she|him|her|his|hers|himself|herself)\b/i;
+
+/** One LLM call; returns usable blurbs (non-empty, no gendered pronouns) keyed by slug, only for the given mentors. */
 async function requestBlurbs(env: Env, context: string, mentors: Mentor[]): Promise<Map<string, string>> {
   const list = mentors
     .map((m) => `slug: ${m.slug}\nname: ${m.name}\nheadline: ${m.headline}\nsnippet: ${m.snippet}\nwhy they match: ${m.reason}`)
@@ -49,8 +52,8 @@ For every mentor, write one blurb of 2-3 sentences addressed to the user ("You b
 
 Rules:
 - Use only facts from the user's context and the mentor's headline, snippet and "why they match". Never invent employers, titles, schools or shared history.
-- If you aren't sure of a fact, leave it out.
-- Refer to the mentor by first name or "they/them". Never guess pronouns like "he" or "she" from a name.
+- If you aren't sure of a fact, leave it out. Don't say they do something the user wants (e.g. machine learning) unless their headline or snippet shows it; if it doesn't, the question can ask whether their work involves it.
+- Refer to the mentor by first name or "they/them", every time. Never write he, she, him, her, his or hers.
 - Plain text only: no markdown, no emojis.
 - Return exactly one blurb per mentor, using the slug exactly as given.
 
@@ -65,5 +68,7 @@ ${context.trim() || "Nothing known yet."}
     { temperature: 0.4, maxTokens: 3000 },
   );
   const wanted = new Set(mentors.map((m) => m.slug));
-  return new Map(blurbs.filter((b) => wanted.has(b.slug) && b.blurb.trim()).map((b) => [b.slug, b.blurb.trim()]));
+  return new Map(
+    blurbs.filter((b) => wanted.has(b.slug) && b.blurb.trim() && !GENDERED.test(b.blurb)).map((b) => [b.slug, b.blurb.trim()]),
+  );
 }

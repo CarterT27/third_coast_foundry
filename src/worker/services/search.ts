@@ -131,7 +131,7 @@ export async function runSearch(env: Env, queries: string[], page = 0): Promise<
  */
 export async function generateQueries(env: Env, context: string): Promise<string[]> {
   const { preferences, rubric, documents } = splitContext(context);
-  const { specs } = await chatJSON(
+  const plan = await chatJSON(
     env,
     [
       {
@@ -139,11 +139,16 @@ export async function generateQueries(env: Env, context: string): Promise<string
         content: `You plan LinkedIn searches to find mentors for someone's coffee chats.
 
 Return ${MAX_QUERIES} search specs. Each spec becomes one Google-style query restricted to LinkedIn profiles:
-- titles: 1-3 job titles, OR'd together (e.g. "product manager", "PM").
+- titles: 1-3 job titles (e.g. "product manager", "PM"). Only the first is searched: an OR of several quoted titles finds far fewer people than one title alone. Put the best short title first.
 - keywords: usually empty. At most 1 term that literally appears on people's profiles (e.g. fintech). Never a descriptive phrase like "frontier AI" or "early-stage": profiles don't say that, so the query finds nobody.
 - companies: 0-4 real company names, OR'd together. Never a description like "Chicago startup".
 - schools: 0-2 schools, OR'd together (the user's own school finds alumni).
-- location: one city or region, only if the user cares about location.
+- location: one city, only if the user cares about location. Just the city ("Houston"), never "Houston, Texas": profiles show "Location: Houston", so the longer form finds almost nobody.
+
+Also return:
+- targetCompanies: up to 6 companies the user is aiming for (named, or well-known ones that fit), best first.
+- skills: if they want a skill applied in a field (e.g. machine learning at quant trading firms, ML engineers with clinical training), 1-2 short words for the skill as profiles write it ("machine learning", "deep learning"); otherwise empty. Extra searches pair these with targetCompanies, because a title that combines both ("machine learning researcher") finds almost nobody.
+- seniorTitles: if they want senior leaders, 1-3 short senior titles ("managing director", "head of", "partner"); otherwise empty. Extra searches pair these with targetCompanies.
 
 The user's interview preferences are what they want; their documents are background. When the two conflict, follow the preferences. The scoring rubric shows what matters most to them, so aim most specs at the criteria worth the most points.
 
@@ -160,8 +165,10 @@ Rules:
 - You may add well-known real companies that clearly fit what the user described. If they give examples ("labs like OpenAI") or a category ("AI inference startups"), include similar companies in that category, not only the ones named.
 - Write company and school names in full, the way they appear on LinkedIn: "Google DeepMind", never "GDM"; "University of Chicago", never "UChicago".
 - Match titles to what they asked for, including the exact titles people in that field use (e.g. "member of technical staff" at AI labs). If they gave a seniority preference, use titles at that level; if not, don't.
-- Only set location when the user wants one or two specific places and doesn't accept remote. Otherwise leave it out.
-- Search results rarely show a school next to an exact job title, so specs with a school must use broad one-word titles ("engineer", "research", "researcher") plus the target companies, and no location.
+- Prefer short, common titles ("trader", "quantitative researcher") over long exact ones ("natural gas scheduler"). A long title plus companies plus a location usually finds nobody.
+- For two things together, put the skill in titles, not keywords.
+- Only set location when the user wants one or two specific places and doesn't accept remote. Otherwise leave it out. If they said the location is required, set it on every spec.
+- Search results rarely show a school next to an exact job title, so specs with a school must use broad one-word titles ("engineer", "research", "researcher") plus the target companies, and no location unless the location is required.
 - Keep each spec broad enough to return results: besides titles, fill in at most 2 of keywords, companies, schools and location. Never 3 or more.
 - Skip companies or paths the user wants to avoid.
 - Every spec must be different.`,
@@ -181,8 +188,26 @@ ${documents || "No documents yet."}
 </documents>`,
       },
     ],
-    z.object({ specs: z.array(XraySpec) }),
+    z.object({
+      specs: z.array(XraySpec),
+      targetCompanies: z.array(z.string()).optional(),
+      skills: z.array(z.string()).optional(),
+      seniorTitles: z.array(z.string()).optional(),
+    }),
   );
+  // The skill and senior-title searches are built here rather than left to the model, which
+  // tends to write combined titles ("machine learning researcher") that find nobody.
+  const companies = (plan.targetCompanies ?? []).filter((c) => c.trim()).slice(0, 6);
+  const groups = companies.length > 3 ? [companies.slice(0, 3), companies.slice(3)] : [companies];
+  const pairWith = (titles: string[] | undefined) =>
+    companies.length === 0
+      ? []
+      : (titles ?? [])
+          .filter((t) => t.trim())
+          .slice(0, 2)
+          .flatMap((title) => groups.map((group) => ({ titles: [title], keywords: [], companies: group, schools: [] })));
+  const extra = [...pairWith(plan.skills), ...pairWith(plan.seniorTitles)].slice(0, EXTRA_QUERIES);
+  const specs = [...extra, ...plan.specs];
   const queries = [...new Set(specs.map((spec) => buildXray(narrowest(spec))))].slice(0, MAX_QUERIES);
   if (queries.length === 0) throw new Error("The LLM returned no search queries");
   return queries;
@@ -191,13 +216,26 @@ ${documents || "No documents yet."}
 /** Filters besides titles kept per query; every extra one shrinks the results a lot. */
 const MAX_FILTERS = 2;
 
-/** Keeps the MAX_FILTERS most useful filters, in the order schools, companies, location, keywords. */
+/** Skill × company and senior title × company searches taken from the plan, out of MAX_QUERIES. */
+const EXTRA_QUERIES = 4;
+
+/**
+ * Searches the first title only, since the search engine returns far fewer results for an OR
+ * of quoted titles. Keeps the MAX_FILTERS most useful filters, in the order schools, companies, location, keywords,
+ * dropping companies next to a city when the title is more than one word.
+ * A keyword is dropped next to a school or companies (titles + keyword + companies finds almost
+ * nobody), and a location is cut to its city ("Houston, Texas" → "Houston"), the form profiles show.
+ */
 function narrowest(spec: XraySpec): XraySpec {
   let left = MAX_FILTERS;
   const keep = (has: boolean) => has && left-- > 0;
   const schools = keep(spec.schools.length > 0) ? spec.schools : [];
-  const companies = keep(spec.companies.length > 0) ? spec.companies : [];
-  const location = keep(Boolean(spec.location)) ? spec.location : undefined;
-  const keywords = keep(spec.keywords.length > 0) ? spec.keywords.slice(0, 1) : [];
-  return { titles: spec.titles, keywords, companies, schools, location };
+  let companies = keep(spec.companies.length > 0) ? spec.companies : [];
+  const city = spec.location?.split(",")[0].trim();
+  const location = keep(Boolean(city)) ? city : undefined;
+  // Companies and a city together only find people with a one-word title ("trader").
+  if (location && companies.length > 0 && /\s/.test(spec.titles[0]?.trim() ?? "")) companies = [];
+  const alone = schools.length === 0 && companies.length === 0;
+  const keywords = keep(alone && spec.keywords.length > 0) ? spec.keywords.slice(0, 1) : [];
+  return { titles: spec.titles.slice(0, 1), keywords, companies, schools, location };
 }

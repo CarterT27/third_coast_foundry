@@ -145,6 +145,7 @@ Bad: "That's wonderful! I'd love to hear more. What industries interest you, and
 }
 
 // What the rubric model returns; renderRubric turns it into text with points summing to 100.
+// No max lengths: one extra item would fail the whole call, so renderRubric trims instead.
 const RubricSpec = z.object({
   criteria: z
     .array(
@@ -154,15 +155,14 @@ const RubricSpec = z.object({
         full: z.string(),
         partial: z.string(),
       }),
-    )
-    .max(5),
-  caps: z.array(z.string()).max(5),
+    ),
+  caps: z.array(z.string()),
 });
 type RubricSpec = z.infer<typeof RubricSpec>;
 
 /** Formats the rubric, scaling the model's points so they add up to exactly 100. */
 function renderRubric(spec: RubricSpec): string {
-  const criteria = spec.criteria.filter((c) => Number.isFinite(c.points) && c.points > 0);
+  const criteria = spec.criteria.filter((c) => Number.isFinite(c.points) && c.points > 0).slice(0, 5);
   if (criteria.length === 0) return "";
   const total = criteria.reduce((sum, c) => sum + c.points, 0);
   const points = criteria.map((c) => Math.round((c.points / total) * 100));
@@ -170,7 +170,7 @@ function renderRubric(spec: RubricSpec): string {
   const lines = criteria.map(
     (c, i) => `- ${c.name.trim()} (up to ${points[i]}): full points if ${c.full.trim()}; about half if ${c.partial.trim()}; otherwise 0.`,
   );
-  const caps = [...FIXED_CAPS, ...spec.caps.map((c) => c.trim()).filter(Boolean)];
+  const caps = [...FIXED_CAPS, ...spec.caps.map((c) => c.trim()).filter(Boolean).slice(0, 5)];
   return `${RUBRIC_HEADING} (points add up to 100)
 ${lines.join("\n")}
 Caps (these override the points):
@@ -191,21 +191,30 @@ A scorer will see only each person's LinkedIn headline and search snippet, so ev
 
 Return 0-5 criteria (none if the user named nothing concrete, e.g. only "idk" or "anyone"; a default rubric is used then):
 - name: a short label, e.g. "Employer", "Role", "Shared background".
-- points: how much this criterion matters to THIS user, exactly 3, 2 or 1 (scaled later so they add up to 100):
+- points: how much this criterion matters to THIS user, exactly 3, 2 or 1, plus 5 for the top priority (scaled later so they add up to 100):
+  5 = the one thing they said matters most ("the most important thing", "above all", "non-negotiable", "X only"). At most one criterion, or two if they said both matter most.
   3 = a must: they said it is required ("they need to…", "I want them to…") or brought it up on their own without being asked.
   2 = a clear goal they named in answer to a question, like their target industry or role.
-  1 = a mild preference, like a one-word answer on location.
+  1 = a mild preference: a one-word answer, or anything they called "not a big deal", "a nice bonus", "would be great" or "not required".
 - full: what earns full points, in the user's own terms, e.g. "they work at a frontier AI lab such as OpenAI, Anthropic or Google DeepMind".
 - partial: what earns about half the points.
+Every criterion describes the mentor ("they work at…", "their title is…"), never the user.
 
 Rules:
+- When the user wants two things together (e.g. machine learning applied at quant trading firms, or ML engineers with clinical training), make each part its own criterion ("Quant firm", "Machine learning"), so a profile that shows only one part earns only that part's points. Each part's criterion counts only direct evidence of that part, and its examples must not name the other part.
+  Bad: full "their title or profile shows they apply machine learning (e.g. quant researcher, ML researcher)".
+  Good: full "their title or snippet says machine learning, deep learning, ML or AI"; partial "their snippet mentions a related method such as statistical learning or neural networks".
 - Build criteria only from what the user said matters. Topics they answered with "anyone", "either", "no preference" or similar get no criterion at all, not even a small one. Every other topic with a concrete answer (a city, a role, a school) gets one, even if small.
 - The career timeline describes the user's own plans (an internship, a job search, a career switch), not the mentor, so it never becomes a criterion.
 - Use the user's exact target role for full role points. Related titles (e.g. research scientist when they asked for research engineer) go in "partial", never in "full", unless the user said they are open to them. Things the user said they are open to earn full points, not partial.
 - For shared background, full points only for the user's own schools or past employers listed in their documents, plus anything specific they named. The scorer sees those documents. A school that is merely similar, prestigious, or in the same city, region or country earns nothing, full or partial. If they asked for a shared school, the partial is "they share a past employer with the user".
 - Call them "the user", never by name or pronoun.
 - Write company names in full (Google DeepMind, not GDM). When the user gives examples or a category of company, say that similar companies count too.
-- caps: one line each, "<condition>: at most <score>.", only for companies, paths or kinds of people the user wants to avoid. Return an empty list if they want to avoid nothing.
+- caps: one line each, "<condition>: at most <score>.":
+  - companies, paths or kinds of people the user wants to avoid ("at most 0" to "at most 10");
+  - hard requirements the user said are required, "only", "non-negotiable" or useless otherwise: the condition is the profile showing they don't meet it, e.g. "Their profile shows they are based outside Houston: at most 30." or "Their title is not a senior leader (managing director, head, partner, director): at most 40.". The cap for the requirement they said matters most is 25, below every other cap, so missing it always ranks lower than missing anything else. A cap never replaces the criterion: a requirement gets both;
+  - when the user excludes people who have only one of two things they want together (e.g. "not traditional quant who don't do ML"): "Their headline and snippet mention none of: machine learning, deep learning, ML, AI, neural networks, LLM, reinforcement learning: at most 40." Use this exact "mention none of:" form only for a skill, listing words a profile would literally contain, separated by commas; never for employers or kinds of firms.
+  Return an empty list if none apply.
 - Write in English, plain text, no markdown.`,
         },
         { role: "user", content: `<interview>\n${transcript}\n</interview>` },
