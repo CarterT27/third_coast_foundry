@@ -30,6 +30,18 @@ export function Mentors({ mentors, onChange }: Props) {
   const arrived = run?.picks?.some((p) => mentors.some((m) => m.slug === p.slug)) ?? false;
   const showBoard = run !== null && !(run.stage === "done" && arrived);
 
+  // Editing the interview or documents clears the shown mentors while this step stays
+  // mounted; drop the last run so its board doesn't come back in place of the cards.
+  const shownBefore = useRef(mentors.length);
+  useEffect(() => {
+    if (shownBefore.current > 0 && mentors.length === 0) {
+      dispatch({ type: "reset" });
+      setExhausted(false);
+      setError(null);
+    }
+    shownBefore.current = mentors.length;
+  }, [mentors.length]);
+
   const leaving = run?.people.some((p) => p.leaving) ?? false;
   useEffect(() => {
     if (!leaving) return;
