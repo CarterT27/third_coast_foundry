@@ -128,6 +128,34 @@ export function createDb(env: Env, token: string, userId: string) {
       return { context, version: profile.data?.context_version ?? 0 };
     },
 
+    /** Every uploaded document's raw text, joined like loadContext (each capped at `maxChars`). */
+    async loadRawText(maxChars: number): Promise<string> {
+      const { data, error } = await sb.from("documents").select("kind, filename, raw_text").neq("raw_text", "");
+      if (error) fail("loadRawText", error);
+      return data
+        .sort((a, b) => CONTEXT_ORDER.indexOf(a.kind) - CONTEXT_ORDER.indexOf(b.kind))
+        .map((d) => `## ${d.kind.toUpperCase()} (${d.filename})\n${d.raw_text.slice(0, maxChars)}`)
+        .join("\n\n");
+    },
+
+    /** Uploaded documents that don't have a context note yet. */
+    async documentsWithoutNotes(): Promise<{ kind: UploadKind; rawText: string; updatedAt: string }[]> {
+      const { data, error } = await sb
+        .from("documents")
+        .select("kind, raw_text, updated_at")
+        .neq("kind", "interview")
+        .eq("context", "")
+        .neq("raw_text", "");
+      if (error) fail("documentsWithoutNotes", error);
+      return data.map((d) => ({ kind: d.kind as UploadKind, rawText: d.raw_text, updatedAt: d.updated_at }));
+    },
+
+    /** Saves a note unless the document was re-uploaded since `updatedAt` (its note is then stale). */
+    async saveNote(kind: UploadKind, updatedAt: string, context: string): Promise<void> {
+      const { error } = await sb.from("documents").update({ context }).eq("kind", kind).eq("updated_at", updatedAt);
+      if (error) fail("saveNote", error);
+    },
+
     async getRawText(kind: UploadKind): Promise<string | null> {
       const { data, error } = await sb.from("documents").select("raw_text").eq("kind", kind).maybeSingle();
       if (error) fail("getRawText", error);

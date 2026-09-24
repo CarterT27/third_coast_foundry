@@ -20,18 +20,34 @@ import { nextTurn, summarize } from "./services/interview";
 import { scoreBatch } from "./services/score";
 import { generateQueries, runSearch } from "./services/search";
 
-/** Re-uploading identical text is a no-op: no LLM call, no context version bump. */
+/** Per-document cap on raw text sent with every interview turn. */
+const INTERVIEW_DOC_CHARS = 20_000;
+
+/**
+ * Stores the raw text only, so uploads never wait on the LLM; fillNotes writes the
+ * context note later. Re-uploading identical text is a no-op.
+ */
 export async function saveDocument(env: Env, db: Db, body: UploadDocumentBody): Promise<DocumentSummary> {
   if ((await db.getRawText(body.kind)) === body.text) {
     return db.getDocumentSummary(body.kind);
   }
-  const context = await extractContext(env, body.kind, body.text);
-  return db.upsertDocument({ ...body, rawText: body.text, context });
+  return db.upsertDocument({ ...body, rawText: body.text, context: "" });
 }
 
-/** Streams the interviewer's reply, then persists the conversation including it. */
+/** Writes context notes for documents that don't have one yet, in parallel. */
+async function fillNotes(env: Env, db: Db): Promise<void> {
+  const missing = await db.documentsWithoutNotes();
+  await Promise.all(
+    missing.map(async (d) => db.saveNote(d.kind, d.updatedAt, await extractContext(env, d.kind, d.rawText))),
+  );
+}
+
+/**
+ * Streams the interviewer's reply, then persists the conversation including it.
+ * Reads the raw document text, so the interview never waits for context notes.
+ */
 export async function* interviewTurn(env: Env, db: Db, messages: ChatMessage[]): AsyncGenerator<string> {
-  const { context } = await db.loadContext();
+  const context = await db.loadRawText(INTERVIEW_DOC_CHARS);
   let reply = "";
   for await (const text of nextTurn(env, context, messages)) {
     reply += text;
@@ -40,19 +56,22 @@ export async function* interviewTurn(env: Env, db: Db, messages: ChatMessage[]):
   await db.saveInterview([...messages, { role: "assistant", content: reply }]);
 }
 
+/** Summarizes the interview while writing any missing context notes. */
 export async function finishInterview(env: Env, db: Db, messages: ChatMessage[]): Promise<void> {
-  const summary = await summarize(env, messages);
+  const [summary] = await Promise.all([summarize(env, messages), fillNotes(env, db)]);
   await db.saveInterview(messages, summary);
 }
 
 /**
  * Returns the next TOP_N mentors.
+ * 0. Write any context notes still missing (normally already done by finishInterview).
  * 1. Reuse unshown mentors already scored for the current context version.
  * 2. If fewer than TOP_N remain: search, store new people, score stale/unscored ones.
  * 3. Write blurbs only where missing or written for an older context version.
  * 4. Mark the returned mentors as shown so "Show more" moves on.
  */
 export async function findMentors(env: Env, db: Db, emit: (e: MentorsEvent) => Promise<void>): Promise<Mentor[]> {
+  await fillNotes(env, db);
   const { context, version } = await db.loadContext();
   let pool = await db.unshownPool(version, TOP_N);
 

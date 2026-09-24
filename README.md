@@ -42,10 +42,12 @@ once, then `npm run deploy`. Either way it builds the page with the `PUBLIC_*` v
 ```
 Browser                                   Worker (/api/*)                     Services
 ───────                                   ───────────────                     ────────
-pdf.js extracts text ──POST /documents──▶ same text as before? skip ──────▶ extractContext
-chat UI ─────────────POST /interview────▶ stream reply, save messages ────▶ nextTurn
+pdf.js extracts text ──POST /documents──▶ store raw text (no LLM call)
+chat UI ─────────────POST /interview────▶ stream reply from raw text ─────▶ nextTurn
 "Finish" ─────POST /interview/finish────▶ save summary as a document ─────▶ summarize
+                                           + write missing notes ────────▶ extractContext
 "Find mentors" ─────────POST /mentors───▶ pipeline.findMentors:
+                                           0. write any notes still missing ▶ extractContext
                                            1. reuse unshown mentors scored for this context
                                            2. else: queries → search → store ─▶ generateQueries, runSearch
                                               score new/stale in batches of 20 ▶ scoreBatch
@@ -54,8 +56,9 @@ chat UI ─────────────POST /interview────▶ st
 ```
 
 - **Context, not structured data.** Each document (and the finished interview) is stored
-  as its raw text plus an LLM-written plaintext note. Later steps read the notes, so
-  prompts can change without migrations.
+  as its raw text plus an LLM-written plaintext note. The interview reads the raw text so
+  nobody waits on an LLM call to upload; notes are written when the interview finishes,
+  and the mentor search reads them. Prompts can change without migrations.
 - **`context_version`.** A database trigger bumps it whenever a note changes. Scores and
   blurbs remember the version they were made for, so only stale ones are recomputed.
   "Show 10 more" usually costs zero LLM calls.

@@ -21,8 +21,8 @@ export const INTERVIEW_TOPICS = [
  *
  * Contract:
  * - `messages` is the conversation so far (may be empty: then open the interview).
- * - `context` is every uploaded document's context note. Don't ask about facts it
- *   already answers; do reference them ("I see you interned at X…").
+ * - `context` is the raw text of every uploaded document (resume, LinkedIn, transcript).
+ *   Don't ask about facts it already answers; do reference them ("I see you interned at X…").
  * - Ask ONE question at a time, short and conversational. Cover INTERVIEW_TOPICS;
  *   once all are covered, tell the user they can press "Finish interview".
  * - Yields text chunks as they arrive (the route forwards each one to the browser).
@@ -33,7 +33,7 @@ export const INTERVIEW_TOPICS = [
 export async function* nextTurn(env: Env, context: string, messages: ChatMessage[]): AsyncGenerator<string> {
   const system = `You are a friendly career advisor interviewing a student to find them mentors for coffee chats.
 
-What we already know about the student (from their uploaded documents):
+What we already know about the student: the raw text of their uploaded PDFs (resume, LinkedIn, transcript). It may be messy; use it only for facts, and ignore contact details.
 <context>
 ${context.trim() || "Nothing uploaded yet."}
 </context>

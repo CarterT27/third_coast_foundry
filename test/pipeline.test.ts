@@ -2,12 +2,13 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { TOP_N, type Candidate, type Mentor } from "../src/shared/schemas";
 import type { Db, PoolMentor } from "../src/worker/lib/db";
-import { findMentors, saveDocument } from "../src/worker/pipeline";
+import { finishInterview, findMentors, interviewTurn, saveDocument } from "../src/worker/pipeline";
 import { writeBlurbs } from "../src/worker/services/blurbs";
 import { extractContext } from "../src/worker/services/documents";
+import { nextTurn, summarize } from "../src/worker/services/interview";
 import { scoreBatch } from "../src/worker/services/score";
 import { generateQueries, runSearch } from "../src/worker/services/search";
-import { candidate, env } from "./helpers";
+import { candidate, collect, env } from "./helpers";
 
 vi.mock("../src/worker/services/search", () => ({ generateQueries: vi.fn(), runSearch: vi.fn() }));
 vi.mock("../src/worker/services/score", () => ({ scoreBatch: vi.fn() }));
@@ -26,7 +27,7 @@ type Row = Candidate & {
 
 function fakeDb(version = 1) {
   const rows = new Map<string, Row>();
-  const docs = new Map<string, string>();
+  const docs = new Map<string, { rawText: string; context: string; updatedAt: string }>();
   const db = {
     rows,
     version,
@@ -55,12 +56,22 @@ function fakeDb(version = 1) {
     markShown: async (slugs: string[]) => {
       for (const s of slugs) rows.get(s)!.shown = true;
     },
-    getRawText: async (kind: string) => docs.get(kind) ?? null,
+    docs,
+    getRawText: async (kind: string) => docs.get(kind)?.rawText ?? null,
     getDocumentSummary: async (kind: string) => ({ kind, filename: "cached.pdf", sizeBytes: 1, updatedAt: "" }),
-    upsertDocument: async (d: { kind: string; filename: string; sizeBytes: number; rawText: string }) => {
-      docs.set(d.kind, d.rawText);
-      return { kind: d.kind, filename: d.filename, sizeBytes: d.sizeBytes, updatedAt: "" };
+    upsertDocument: async (d: { kind: string; filename: string; sizeBytes: number; rawText: string; context: string }) => {
+      const updatedAt = String(docs.size + 1);
+      docs.set(d.kind, { rawText: d.rawText, context: d.context, updatedAt });
+      return { kind: d.kind, filename: d.filename, sizeBytes: d.sizeBytes, updatedAt };
     },
+    loadRawText: async () => [...docs.values()].map((d) => d.rawText).join("\n\n"),
+    documentsWithoutNotes: async () =>
+      [...docs.entries()].filter(([, d]) => !d.context).map(([kind, d]) => ({ kind, rawText: d.rawText, updatedAt: d.updatedAt })),
+    saveNote: async (kind: string, updatedAt: string, context: string) => {
+      const d = docs.get(kind);
+      if (d?.updatedAt === updatedAt) d.context = context;
+    },
+    saveInterview: vi.fn(async () => {}),
   };
   return db;
 }
@@ -139,14 +150,63 @@ describe("findMentors", () => {
 describe("saveDocument", () => {
   const body = { kind: "resume" as const, filename: "resume.pdf", sizeBytes: 100, text: "RESUME" };
 
-  it("extracts context for new text and skips identical re-uploads", async () => {
+  it("stores raw text without an LLM call and skips identical re-uploads", async () => {
     const db = fakeDb();
-    vi.mocked(extractContext).mockResolvedValue("note");
 
     await saveDocument(env, asDb(db), body);
     const second = await saveDocument(env, asDb(db), body);
 
-    expect(extractContext).toHaveBeenCalledTimes(1);
+    expect(extractContext).not.toHaveBeenCalled();
+    expect(db.docs.get("resume")).toMatchObject({ rawText: "RESUME", context: "" });
     expect(second.filename).toBe("cached.pdf");
+  });
+});
+
+describe("context notes", () => {
+  const upload = (db: ReturnType<typeof fakeDb>, kind: "resume" | "transcript", text: string) =>
+    saveDocument(env, asDb(db), { kind, filename: `${kind}.pdf`, sizeBytes: 1, text });
+
+  it("gives the interview the raw text, with no note calls", async () => {
+    const db = fakeDb();
+    await upload(db, "resume", "RAW_RESUME");
+    vi.mocked(nextTurn).mockImplementation(async function* () {
+      yield "Hi";
+    });
+
+    await collect(interviewTurn(env, asDb(db), []));
+
+    expect(vi.mocked(nextTurn).mock.calls[0][1]).toContain("RAW_RESUME");
+    expect(extractContext).not.toHaveBeenCalled();
+  });
+
+  it("writes every missing note when the interview finishes, and only once", async () => {
+    const db = fakeDb();
+    await upload(db, "resume", "R");
+    await upload(db, "transcript", "T");
+    vi.mocked(summarize).mockResolvedValue("summary");
+    vi.mocked(extractContext).mockImplementation(async (_env, kind) => `note ${kind}`);
+
+    await finishInterview(env, asDb(db), []);
+    vi.mocked(runSearch).mockResolvedValue([]);
+    await findMentors(env, asDb(db), emit);
+
+    expect(extractContext).toHaveBeenCalledTimes(2);
+    expect(db.docs.get("resume")?.context).toBe("note resume");
+    expect(db.docs.get("transcript")?.context).toBe("note transcript");
+    expect(db.saveInterview).toHaveBeenCalledWith([], "summary");
+  });
+
+  it("drops a note whose document was re-uploaded while it was being written", async () => {
+    const db = fakeDb();
+    await upload(db, "resume", "OLD");
+    vi.mocked(summarize).mockResolvedValue("summary");
+    vi.mocked(extractContext).mockImplementation(async () => {
+      await upload(db, "resume", "NEW");
+      return "note for OLD";
+    });
+
+    await finishInterview(env, asDb(db), []);
+
+    expect(db.docs.get("resume")).toMatchObject({ rawText: "NEW", context: "" });
   });
 });
