@@ -21,9 +21,10 @@ inside it, not to change it. Read README.md for how the pieces fit.
 - Disable lint rules or use `any` / `@ts-ignore` to get past an error.
 - Add embeddings, vector search, queues, caches, headless browsers, or scraping of linkedin.com.
 - Use anything that isn't free tier (NVIDIA API, Brave search, Supabase free, Cloudflare Workers free).
+  The one exception is the OpenRouter LLM provider, which is already wired into `src/worker/lib/llm.ts`.
 
 ## How to do things
-- LLM calls: `chat`, `chatJSON`, `chatStream` from `src/worker/lib/nvidia.ts`. Never call `fetch`.
+- LLM calls: `chat`, `chatJSON`, `chatStream` from `src/worker/lib/llm.ts` (NVIDIA or OpenRouter, picked by `LLM_PROVIDER`). Never call `fetch`.
 - Web search: `search` from `src/worker/lib/search-provider.ts`.
 - Page → API: functions in `src/web/lib/api.ts`. Never call `fetch` from components.
 - Database: services never touch it; `pipeline.ts` does.

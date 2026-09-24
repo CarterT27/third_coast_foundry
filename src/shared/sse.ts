@@ -1,6 +1,6 @@
 /**
  * Reads a Server-Sent Events stream and yields each event's `data` payload.
- * Used by the Worker (NVIDIA's streaming responses) and the page (our own streams).
+ * Used by the Worker (LLM streaming responses) and the page (our own streams).
  */
 export async function* readSSE(body: ReadableStream<Uint8Array>): AsyncGenerator<string> {
   const reader = body.getReader();

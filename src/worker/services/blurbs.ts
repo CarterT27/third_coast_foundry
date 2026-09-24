@@ -14,7 +14,7 @@ import type { Env } from "../env";
  * - Only uses facts from `context` and the mentor's headline/snippet/reason — never
  *   invent employers, titles or shared history.
  *
- * Hints: `import { chatJSON } from "../lib/nvidia"` with
+ * Hints: `import { chatJSON } from "../lib/llm"` with
  * `z.object({ blurbs: z.array(Blurb) })`; one call for the whole list (≤ TOP_N).
  */
 export async function writeBlurbs(env: Env, context: string, mentors: Mentor[]): Promise<Blurb[]> {

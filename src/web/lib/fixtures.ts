@@ -1,4 +1,4 @@
-// Fake data for building the UI without Supabase, NVIDIA or search keys.
+// Fake data for building the UI without Supabase, LLM or search keys.
 // Enabled with PUBLIC_USE_FIXTURES=true in .env (see lib/api.ts).
 import type { AppState, Mentor } from "../../shared/schemas";
 

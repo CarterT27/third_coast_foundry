@@ -15,7 +15,7 @@ import type { Env } from "../env";
  * - `reason` is one sentence citing evidence from the candidate's headline/snippet.
  *
  * Hints:
- * - `import { chatJSON } from "../lib/nvidia"` with `z.object({ scores: z.array(Score) })`.
+ * - `import { chatJSON } from "../lib/llm"` with `z.object({ scores: z.array(Score) })`.
  * - Keep batches consistent with a rubric that anchors each band with examples, e.g.
  *   90+ = target role AND industry AND shared school; 70 = target role, adjacent
  *   industry; 40 = related field only; <20 = recruiter/student/unrelated.

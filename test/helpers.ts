@@ -6,6 +6,8 @@ export const env: Env = {
   PUBLIC_SUPABASE_PUBLISHABLE_KEY: "sb_publishable_test",
   NVIDIA_API_KEY: "test",
   NVIDIA_MODEL: "test-model",
+  OPENROUTER_API_KEY: "test-or",
+  OPENROUTER_MODEL: "test-or-model",
   BRAVE_API_KEY: "test",
 };
 

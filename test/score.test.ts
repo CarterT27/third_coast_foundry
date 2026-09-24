@@ -1,10 +1,10 @@
 // OWNER: Carter. Remove `.skip` as you implement.
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { chatJSON } from "../src/worker/lib/nvidia";
+import { chatJSON } from "../src/worker/lib/llm";
 import { scoreBatch } from "../src/worker/services/score";
 import { candidate, env } from "./helpers";
 
-vi.mock("../src/worker/lib/nvidia", () => ({ chatJSON: vi.fn() }));
+vi.mock("../src/worker/lib/llm", () => ({ chatJSON: vi.fn() }));
 
 beforeEach(() => vi.resetAllMocks());
 

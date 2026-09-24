@@ -1,12 +1,12 @@
 // OWNER: Tigo. Remove `.skip` from each describe as you implement.
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { MAX_QUERIES } from "../src/shared/schemas";
-import { chatJSON } from "../src/worker/lib/nvidia";
+import { chatJSON } from "../src/worker/lib/llm";
 import { search } from "../src/worker/lib/search-provider";
 import { buildXray, generateQueries, parseResult, runSearch } from "../src/worker/services/search";
 import { env } from "./helpers";
 
-vi.mock("../src/worker/lib/nvidia", () => ({ chatJSON: vi.fn() }));
+vi.mock("../src/worker/lib/llm", () => ({ chatJSON: vi.fn() }));
 vi.mock("../src/worker/lib/search-provider", () => ({ search: vi.fn() }));
 
 beforeEach(() => vi.resetAllMocks());

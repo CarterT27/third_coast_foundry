@@ -2,7 +2,7 @@
 // Implement the function bodies. Do not change the signatures.
 import type { ChatMessage } from "../../shared/schemas";
 import type { Env } from "../env";
-import { chat, chatStream, type LLMMessage } from "../lib/nvidia";
+import { chat, chatStream, type LLMMessage } from "../lib/llm";
 
 /** What the interview must learn. Edit freely; it only shapes the prompt. */
 export const INTERVIEW_TOPICS = [
@@ -27,7 +27,7 @@ export const INTERVIEW_TOPICS = [
  *   once all are covered, tell the user they can press "Finish interview".
  * - Yields text chunks as they arrive (the route forwards each one to the browser).
  *
- * Hints: `import { chatStream } from "../lib/nvidia"`, build a system prompt from
+ * Hints: `import { chatStream } from "../lib/llm"`, build a system prompt from
  * `context` + INTERVIEW_TOPICS, then `yield*` the stream.
  */
 export async function* nextTurn(env: Env, context: string, messages: ChatMessage[]): AsyncGenerator<string> {
@@ -74,7 +74,7 @@ Bad: "That's wonderful! I'd love to hear more. What industries interest you, and
  * - Plain text, roughly 150–300 words, one line per topic in INTERVIEW_TOPICS.
  * - Only what the user actually said; write "not discussed" for missing topics.
  *
- * Hints: `import { chat } from "../lib/nvidia"`; one call with low temperature.
+ * Hints: `import { chat } from "../lib/llm"`; one call with low temperature.
  */
 export async function summarize(env: Env, messages: ChatMessage[]): Promise<string> {
   const transcript = messages.map((m) => `${m.role === "user" ? "Student" : "Interviewer"}: ${m.content}`).join("\n\n");

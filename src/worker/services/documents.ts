@@ -2,7 +2,7 @@
 // Implement the function body. Do not change the signature.
 import type { UploadKind } from "../../shared/schemas";
 import type { Env } from "../env";
-import { chat } from "../lib/nvidia";
+import { chat } from "../lib/llm";
 
 type Section = [label: string, what: string];
 
@@ -112,7 +112,7 @@ function instructions(kind: UploadKind): string {
  * - Never invents facts that aren't in `text`.
  *
  * Hints:
- * - `import { chat } from "../lib/nvidia"` and make ONE call: a system message
+ * - `import { chat } from "../lib/llm"` and make ONE call: a system message
  *   describing the note you want, and a user message containing `kind` and `text`.
  * - Tailor the instructions per `kind` (a transcript needs courses and GPA; a
  *   LinkedIn export needs headline, roles and groups).

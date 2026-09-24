@@ -59,7 +59,7 @@ export async function runSearch(env: Env, queries: string[]): Promise<Candidate[
  * - Angles should vary: alumni in target roles, target companies × roles, adjacent
  *   roles, people who made the same career switch, etc.
  *
- * Hints: `import { chatJSON } from "../lib/nvidia"` with
+ * Hints: `import { chatJSON } from "../lib/llm"` with
  * `z.object({ specs: z.array(XraySpec) })` as the schema, then map through buildXray.
  */
 export async function generateQueries(env: Env, context: string): Promise<string[]> {

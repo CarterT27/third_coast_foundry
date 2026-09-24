@@ -4,8 +4,8 @@ Upload your resume, transcript and LinkedIn profile, answer a short interview ab
 what you're looking for, and get the 10 people most worth a coffee chat — each with a
 note on why.
 
-Everything runs on free tiers: Cloudflare Workers, Supabase, the NVIDIA API, and Brave
-Search.
+Everything runs on free tiers (Cloudflare Workers, Supabase, the NVIDIA API, Brave
+Search) except the optional OpenRouter LLM provider, which is paid but much faster.
 
 ## Setup
 
@@ -18,11 +18,19 @@ npm run dev            # page + API on http://localhost:5173
 - **Supabase:** create a project, enable **Authentication → Anonymous sign-ins**, then
   `supabase link --project-ref <ref>` and `supabase db push`. Copy the project URL and
   publishable key into `.env`.
-- **NVIDIA:** API key from [build.nvidia.com](https://build.nvidia.com). `NVIDIA_MODEL` can
-  be any chat model from the catalog that supports `response_format` JSON schemas
-  (default `nvidia/nemotron-3-super-120b-a12b`; the smaller Lightning model often garbles long notes). Thinking is turned off in every
-  request (`chat_template_kwargs.enable_thinking: false`) so reasoning models reply
-  directly instead of writing their reasoning into the answer.
+- **LLM:** `LLM_PROVIDER` picks the backend: `nvidia` (default) or `openrouter`. Both use
+  OpenAI-style chat completions, and `src/worker/lib/llm.ts` is the only code that calls them.
+  - **NVIDIA** (free, slow): API key from [build.nvidia.com](https://build.nvidia.com).
+    `NVIDIA_MODEL` can be any chat model from the catalog that supports `response_format`
+    JSON schemas (default `nvidia/nemotron-3-super-120b-a12b`; the smaller Lightning model
+    often garbles long notes). Thinking is turned off in every request
+    (`chat_template_kwargs.enable_thinking: false`) so reasoning models reply directly
+    instead of writing their reasoning into the answer.
+  - **OpenRouter** (paid, fast): API key from [openrouter.ai/keys](https://openrouter.ai/keys).
+    **Set a credit limit on the key.** `OPENROUTER_MODEL` defaults to
+    `~deepseek/deepseek-v4-flash-latest` (the `~` alias tracks the newest V4 Flash). Requests turn thinking off (`reasoning.enabled: false`),
+    go to the lowest-latency host (`provider.sort: "latency"`), and JSON calls only go to
+    hosts that support `response_format` (`provider.require_parameters: true`).
 - **Search:** Brave Search API key ($5 free credit/month ≈ 1,000 queries).
 - **No keys yet?** Set `PUBLIC_USE_FIXTURES=true` to build the UI with fake data.
 
@@ -71,7 +79,7 @@ chat UI ─────────────POST /interview────▶ st
 src/shared/     contract: zod schemas + types for every request/response/event, SSE parser
 src/worker/     Hono API
   index.ts        routes (thin)          pipeline.ts   orchestration (services + db)
-  lib/            the only code that talks to NVIDIA, search APIs, Postgres
+  lib/            the only code that talks to LLM APIs, search APIs, Postgres
   services/       pure logic — LLM/search in, data out (no db, no HTTP)
 src/web/        React single page
   App.tsx         derives the active step from server state

@@ -1,10 +1,10 @@
 // OWNER: Ania. Remove `.skip` as you implement.
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { chat } from "../src/worker/lib/nvidia";
+import { chat } from "../src/worker/lib/llm";
 import { extractContext } from "../src/worker/services/documents";
 import { env } from "./helpers";
 
-vi.mock("../src/worker/lib/nvidia", () => ({ chat: vi.fn() }));
+vi.mock("../src/worker/lib/llm", () => ({ chat: vi.fn() }));
 
 beforeEach(() => vi.resetAllMocks());
 

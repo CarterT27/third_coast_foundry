@@ -63,7 +63,7 @@ export default defineConfig(
   {
     files: ["src/worker/services/**"],
     rules: {
-      "no-restricted-globals": noFetch("Use src/worker/lib/nvidia.ts or src/worker/lib/search-provider.ts."),
+      "no-restricted-globals": noFetch("Use src/worker/lib/llm.ts or src/worker/lib/search-provider.ts."),
       "@typescript-eslint/no-restricted-imports": [
         "error",
         {
