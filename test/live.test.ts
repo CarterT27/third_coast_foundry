@@ -9,7 +9,8 @@
 //     Runs the same steps as pipeline.findMentors in-process with the services in this
 //     checkout: no Supabase and no site quota, only LLM calls and ~30 Brave queries.
 //
-// Keys and URLs come from the environment or .env. Each scenario's full run (rubric, queries,
+// LIVE_SCENARIOS=premed,banking runs only those personas (default: all seven; in site mode each
+// persona is one of the 10 daily searches). Keys and URLs come from the environment or .env. Each scenario's full run (rubric, queries,
 // every score, the mentors and blurbs) is printed as JSON so a failure can be reproduced by hand.
 //
 // Each scenario asserts what the user should get, so a failure is a wrong answer to fix.
@@ -103,21 +104,156 @@ Location: Houston, TX`,
       ["Anything to avoid?", "Avoid oil and gas upstream/exploration roles, I only want trading."],
     ],
   },
+  premed: {
+    docs: {
+      resume: `Aisha Rahman
+University of Michigan, B.S. Neuroscience, expected May 2027, GPA 3.85
+Experience:
+EMT, Huron Valley Ambulance, 2024-present
+Research Assistant, Michigan Medicine Department of Emergency Medicine, 2025
+Volunteer, C.S. Mott Children's Hospital, 2023-present
+Activities: American Medical Student Association (AMSA), chapter Treasurer; Michigan First-Gen Promise scholar
+Location: Ann Arbor, MI`,
+    },
+    interview: [
+      ["Hi Aisha! I see you work as an EMT. What field are you aiming for?", "Medicine. I'm premed and want to be a physician, ideally in emergency medicine."],
+      [
+        "What kinds of people do you want to meet?",
+        "Emergency medicine physicians or residents. Current medical students are great too, honestly I most want med students since they just went through applications.",
+      ],
+      ["What's your timeline?", "Applying to medical school in the 2026 cycle."],
+      ["Any location preference?", "Anywhere."],
+      ["What do you want from a mentor?", "Advice on med school applications and the MCAT, and what EM residency is like."],
+      ["What seniority?", "Medical students or residents are ideal; attendings are fine too."],
+      ["Does shared background matter?", "University of Michigan alumni would be really nice."],
+      [
+        "Anything to avoid?",
+        "Avoid pharma sales, healthcare consulting and hospital administrators. I want people on the clinical path.",
+      ],
+    ],
+  },
+  banking: {
+    docs: {
+      resume: `Daniel Ortiz
+Indiana University, Kelley School of Business, B.S. Finance, expected May 2027, GPA 3.7
+Experience:
+Summer Analyst, Crowe LLP (Transaction Advisory), Summer 2025
+Member, Kelley Investment Banking Workshop (IBW), 2024-present
+Treasurer, Latino Business Student Association, 2024-present
+Skills: Excel, financial modeling, PitchBook, Capital IQ
+Location: Bloomington, IN`,
+    },
+    interview: [
+      ["Hi Daniel! I see you're in Kelley's IBW. What industry are you targeting?", "Investment banking."],
+      [
+        "What roles?",
+        "Investment banking analysts or associates, ideally M&A, at bulge brackets or elite boutiques like Goldman Sachs, Morgan Stanley, JPMorgan, Evercore, Centerview, PJT Partners or Lazard.",
+      ],
+      ["What's your timeline?", "Recruiting for a summer 2026 investment banking summer analyst internship."],
+      ["Locations?", "New York City."],
+      ["What do you want from a mentor?", "Recruiting and networking advice, and what superdays are like."],
+      ["Seniority?", "Analysts or associates, 1-4 years in. Not managing directors."],
+      [
+        "Does shared background matter?",
+        "Indiana University / Kelley alumni. That's the most important thing to me, the IBW network is how people from IU break in.",
+      ],
+      [
+        "Anything to avoid?",
+        "Avoid wealth management, financial advisors, and retail or commercial banking. That's not the same job.",
+      ],
+    ],
+  },
+  highSchool: {
+    docs: {
+      resume: `Maya Chen
+Lincoln Park High School, Chicago, IL, Class of 2026, GPA 4.3 weighted, IB Diploma candidate
+Coursework: IB HL Biology, IB HL Chemistry, AP Calculus BC, AP Physics C
+Activities: Science Olympiad, captain; volunteer at Lurie Children's Hospital; founder of a peer tutoring club
+Awards: Illinois Science Olympiad state medalist, 2025
+Location: Chicago, IL`,
+    },
+    interview: [
+      [
+        "Hi Maya! I see you captain Science Olympiad. What field are you interested in?",
+        "I'm in high school, so not an industry yet. I want to study biomedical engineering in college.",
+      ],
+      [
+        "Who would you like to talk to?",
+        "Current college students studying biomedical engineering at the schools I'm applying to: Johns Hopkins University, Duke University, Georgia Tech and Northwestern University. Current undergrads are exactly who I want.",
+      ],
+      ["What's your timeline?", "Applying to college this fall, starting in fall 2026."],
+      ["Location?", "Anywhere, I'm open to moving for college."],
+      ["What do you want from them?", "What the BME program is really like, and advice on applications and essays."],
+      ["Seniority?", "Current undergrads or people who graduated in the last year or two. Not professors or people far along in their careers."],
+      ["Shared background?", "Someone from Chicago would be amazing, but not required."],
+      ["Anything to avoid?", "No paid college admissions consultants or counselors trying to sell something."],
+    ],
+  },
+  research: {
+    docs: {
+      resume: `Sam Okafor
+University of Chicago, B.S. Neuroscience and B.A. Linguistics, expected June 2028, GPA 3.9
+Coursework: Cognitive Neuroscience, Computational Linguistics, Introduction to Machine Learning, Statistics
+Experience:
+Research Intern, Northwestern Summer Research Opportunity Program, Summer 2025: fMRI data preprocessing
+Tutor, UChicago Neighborhood Schools Program, 2024-present
+Skills: Python, MATLAB, R, PsychoPy
+Location: Chicago, IL`,
+    },
+    interview: [
+      ["Hi Sam! I see you did fMRI preprocessing at Northwestern. What are you looking for?", "Academic research. I want to join a research lab this year."],
+      [
+        "Who do you want to talk to?",
+        "Professors who run labs, postdocs, or PhD students at the University of Chicago working on computational neuroscience or natural language processing. PhD students are great since they know which labs take undergrads.",
+      ],
+      ["What's your timeline?", "Join a lab this winter quarter and do research until I graduate in 2028."],
+      ["Location?", "They must be at UChicago. I need to do this on campus while taking classes."],
+      ["What do you want from them?", "Which labs take undergrads, how to cold-email PIs, and what research is like day to day."],
+      ["Seniority?", "Anyone from PhD students to faculty."],
+      ["Shared background?", "Being at UChicago is required, that's the whole point."],
+      ["Anything to avoid?", "Not industry researchers at companies, and not people outside UChicago."],
+    ],
+  },
 } satisfies Record<string, Persona>;
 
 type ScenarioName = keyof typeof PERSONAS;
 
+const ALL_SCENARIOS = Object.keys(PERSONAS) as ScenarioName[];
+const SELECTED = process.env.LIVE_SCENARIOS
+  ? ALL_SCENARIOS.filter((n) => process.env.LIVE_SCENARIOS!.split(",").includes(n))
+  : ALL_SCENARIOS;
+/** Personas who asked to meet current students, so the student cap mustn't hold them back. */
+const WANTS_STUDENTS: ScenarioName[] = ["premed", "highSchool", "research"];
+
 // ─── Evidence heuristics (headline + snippet only, like the scorer) ──────────
 const text = (m: { headline: string; snippet?: string }) => `${m.headline} ${m.snippet ?? ""}`;
 const QUANT_FIRM =
-  /Citadel|Jane Street|Two Sigma|Hudson River|Jump Trading|XTX|D\.? ?E\.? Shaw|Susquehanna|\bSIG\b|Optiver|\bIMC\b|Tower Research|Renaissance|Millennium|\bDRW\b|Five Rings|Virtu/i;
+  /Citadel|Jane Street|Two Sigma|Hudson River|Jump Trading|XTX|D\.? ?E\.? Shaw|Susquehanna|\bSIG\b|Optiver|\bIMC\b|Tower Research|Renaissance|Millennium|\bDRW\b|Five Rings|Virtu|Qube|\bQRT\b|\bAQR\b|WorldQuant|Point72|Cubist|Balyasny|Radix|Man Group|Squarepoint|Hudson Bay/i;
 const ML = /machine learning|\bML\b|deep learning|\bAI\b|artificial intelligence|neural|\bLLMs?\b|reinforcement learning|statistical learning/i;
-const SENIOR = /managing director|\bMD\b|head of|partner|director|chief|\bVP\b|vice president|principal/i;
+const SENIOR = /managing director|\bMD\b|head of|partner|director|chief|\bCEO\b|\bCTO\b|founder|president|\bVP\b|vice president|principal/i;
 const ENERGY_TRADING = /trad(er|ing)|\bpower\b|natural gas|\bgas\b|energy|commodit/i;
 const HOUSTON = /Houston|Sugar Land|Katy|Woodlands|Pearland|Conroe|Spring|Cypress|Humble|Tomball|Pasadena|Baytown|League City|Missouri City|Bellaire/i; // Greater Houston
 const STUDENT = /\b(student|undergrad(uate)?|phd candidate|class of 20\d\d)\b/i;
 const EDU_EMAIL = /[\w.+-]+@[\w-]+(\.[\w-]+)*\.edu\b/i;
 const GENDERED = /\b(he|she|him|her|his|hers|himself|herself)\b/i;
+const CLINICAL =
+  /\bM\.?D\.?\b|\bD\.?O\.?\b|physician|doctor|resident\b|residency|medical student|med student|\bMS[1-4]\b|\bM[1-4]\b|school of medicine|medical school|college of medicine|emergency medicine|attending|\bEM\b|\bPGY/i;
+const NON_CLINICAL = /pharmaceutical sales|sales rep|\bsales\b|consulting|consultant|administrator|administration/i;
+const MED_STUDENT = /medical student|med student|\bMS[1-4]\b|\bM[1-4]\b|M\.?D\.? candidate|M\.?D\.? student|class of 20\d\d/i;
+const BANK_FIRM =
+  /Goldman|Morgan Stanley|J\.?\s?P\.?\s?Morgan|JPMorgan|Evercore|Centerview|PJT|Lazard|Moelis|Guggenheim|Houlihan|Jefferies|Citi|Bank of America|BofA|Barclays|UBS|Deutsche|Perella|Qatalyst|William Blair|Raymond James|Piper|Lincoln International|Harris Williams|RBC|Wells Fargo|Baird|KeyBanc|Stifel|Rothschild|Greenhill|Solomon/i;
+const IB_ROLE = /investment bank|\bIBD?\b|M&A|mergers|capital markets|leveraged finance|coverage/i;
+const JUNIOR_BANKER = /\banalyst\b|\bassociate\b/i;
+const NOT_IB = /wealth|financial advisor|financial adviser|private bank|branch|retail bank|commercial bank|relationship banker|personal banker|financial planner/i;
+const IU = /Indiana University|Kelley/i;
+const TARGET_COLLEGE = /Johns Hopkins|Duke|Georgia (Institute of )?Tech|Georgia Tech|Northwestern/i;
+const COLLEGE_STUDENT = /\bstudent\b|undergrad|\bclass of 20(2[5-9]|30)\b|'(2[5-9]|30)\b|\b20(2[6-9]|30)\b|\bB\.?S\.?E?\.? (candidate|student)|biomedical engineering (student|major)|\bBME\b|biomedical/i;
+const UCHICAGO = /University of Chicago|UChicago|Pritzker School|Booth School|Crerar|Argonne/i;
+const ACADEMIC =
+  /professor|postdoc|post-doc|postdoctoral|ph\.?d|doctoral|graduate student|grad student|research (scientist|assistant|associate|fellow|specialist)|\blab\b|laborator|principal investigator|\bPI\b|faculty|lecturer|researcher/i;
+const FOCUS = /neuroscien|neural|brain|cognitive|\bNLP\b|natural language|language model|linguistic|computational/i;
+const INDUSTRY_RESEARCH = /\b(Google|Meta|Microsoft|Amazon|OpenAI|Anthropic|Apple|NVIDIA|IBM|Adobe|Salesforce)\b/i;
+const ADMISSIONS_SELLER = /admissions consult|college consult|college counsel|admissions coach|college advis|admissions advis|admissions counsel|essay coach/i;
 
 /** A senior title, or 15+ years of experience in the snippet (the persona asks for either). */
 const isSenior = (m: { headline: string; snippet?: string }) =>
@@ -238,15 +374,22 @@ describe.skipIf(!LIVE)("live red-team scenarios", () => {
   const runs = {} as Record<ScenarioName, Run>;
 
   beforeAll(async () => {
-    const names = Object.keys(PERSONAS) as ScenarioName[];
-    const results = await Promise.all(names.map(runScenario));
-    names.forEach((n, i) => (runs[n] = results[i]));
+    const results = await Promise.all(SELECTED.map(runScenario));
+    SELECTED.forEach((n, i) => (runs[n] = results[i]));
   }, RUN_TIMEOUT);
 
   const describePeople = (list: { name: string; headline: string; score?: number }[]) =>
     list.map((m) => `[${m.score ?? "-"}] ${m.name} | ${m.headline}`).join("\n");
+  /** A check about one persona; skipped when that persona isn't selected. */
+  const itFor = (name: ScenarioName, title: string, fn: () => void) => it.skipIf(!SELECTED.includes(name))(title, fn);
+  const atLeastHalf = (list: Mentor[], match: (m: Mentor) => boolean, what: string) => {
+    const hits = list.filter(match);
+    expect(hits.length, `${what}: ${hits.length}/${list.length}\nall:\n${describePeople(list)}`).toBeGreaterThanOrEqual(
+      Math.ceil(list.length / 2),
+    );
+  };
 
-  it("quant + AI: most mentors show both a quant firm and ML", () => {
+  itFor("quantAi", "quant + AI: most mentors show both a quant firm and ML", () => {
     const { mentors } = runs.quantAi;
     const both = mentors.filter((m) => QUANT_FIRM.test(text(m)) && ML.test(text(m)));
     expect(both.length, `mentors with quant + ML evidence:\n${describePeople(both)}\nall:\n${describePeople(mentors)}`).toBeGreaterThanOrEqual(
@@ -254,7 +397,7 @@ describe.skipIf(!LIVE)("live red-team scenarios", () => {
     );
   });
 
-  it("quant + AI: nobody without ML evidence outscores someone with it", () => {
+  itFor("quantAi", "quant + AI: nobody without ML evidence outscores someone with it", () => {
     const { mentors } = runs.quantAi;
     const withMl = mentors.filter((m) => ML.test(text(m)));
     const withoutMl = mentors.filter((m) => !ML.test(text(m)));
@@ -264,13 +407,13 @@ describe.skipIf(!LIVE)("live red-team scenarios", () => {
     expect(above, `no ML evidence, yet above an ML match (${lowestMl}):\n${describePeople(above)}`).toEqual([]);
   });
 
-  it("seniority named as most important gets the most rubric points", () => {
+  itFor("seniorLeaders", "seniority named as most important gets the most rubric points", () => {
     const points = rubricPoints(runs.seniorLeaders.rubric);
     const seniority = [...points].find(([name]) => /senior/.test(name))?.[1] ?? 0;
     expect(seniority, runs.seniorLeaders.rubric).toBe(Math.max(...points.values()));
   });
 
-  it("seniority named as most important: no junior outscores the best senior leader", () => {
+  itFor("seniorLeaders", "seniority named as most important: no junior outscores the best senior leader", () => {
     // Stream events carry no snippet; the returned mentors do.
     const snippets = new Map(runs.seniorLeaders.mentors.map((m) => [m.slug, m.snippet]));
     const scored = runs.seniorLeaders.scored.map((s) => ({ ...s, snippet: s.snippet ?? snippets.get(s.slug) }));
@@ -280,18 +423,18 @@ describe.skipIf(!LIVE)("live red-team scenarios", () => {
     expect(above, `outscore ${bestSenior!.name} (${bestSenior!.score}):\n${describePeople(above)}`).toEqual([]);
   });
 
-  it("non-negotiable location becomes a cap in the rubric", () => {
+  itFor("houston", "non-negotiable location becomes a cap in the rubric", () => {
     const caps = rubricCaps(runs.houston.rubric);
     expect(caps.some((c) => /Houston/i.test(c)), runs.houston.rubric).toBe(true);
   });
 
-  it("Houston energy trading: most mentors work in energy trading", () => {
+  itFor("houston", "Houston energy trading: most mentors work in energy trading", () => {
     const { mentors } = runs.houston;
     const relevant = mentors.filter((m) => ENERGY_TRADING.test(text(m)));
     expect(relevant.length, `all mentors:\n${describePeople(mentors)}`).toBeGreaterThanOrEqual(Math.ceil(mentors.length / 2));
   });
 
-  it("Houston energy trading: every mentor with a known location is in Houston", () => {
+  itFor("houston", "Houston energy trading: every mentor with a known location is in Houston", () => {
     const outside = runs.houston.mentors.filter((m) => location(m) && !HOUSTON.test(location(m)!));
     expect(outside, describePeople(outside)).toEqual([]);
   });
@@ -303,9 +446,92 @@ describe.skipIf(!LIVE)("live red-team scenarios", () => {
     }
   });
 
-  it("current students are capped at 10", () => {
-    const over = Object.values(runs)
-      .flatMap((r) => r.mentors)
+  // ─── Premed ───
+  itFor("premed", "premed: most mentors are on the clinical path (physicians, residents, med students)", () => {
+    atLeastHalf(runs.premed.mentors, (m) => CLINICAL.test(text(m)), "clinical");
+  });
+
+  itFor("premed", "premed: pharma sales, consulting and administrators are held down", () => {
+    const over = runs.premed.mentors.filter((m) => NON_CLINICAL.test(m.headline) && !CLINICAL.test(m.headline) && m.score > 10);
+    expect(over, describePeople(over)).toEqual([]);
+  });
+
+  // Checked over everyone scored, by headline: a capped student never reaches the top 10.
+  itFor("premed", "premed: medical students they asked for aren't held to the student cap", () => {
+    // Test-prep and tutoring accounts ("Medical student and resident support") aren't students.
+    const capped = runs.premed.scored.filter((s) => MED_STUDENT.test(s.headline) && !/support|prep|tutor|coach|services/i.test(s.headline) && s.score <= 10);
+    expect(capped, describePeople(capped)).toEqual([]);
+  });
+
+  // ─── Investment banking ───
+  itFor("banking", "banking: most mentors are investment bankers", () => {
+    atLeastHalf(runs.banking.mentors, (m) => IB_ROLE.test(text(m)) || (BANK_FIRM.test(text(m)) && JUNIOR_BANKER.test(m.headline)), "IB");
+  });
+
+  itFor("banking", "banking: wealth management, advisors and retail/commercial banking are held down", () => {
+    const over = runs.banking.mentors.filter((m) => NOT_IB.test(m.headline) && m.score > 10);
+    expect(over, describePeople(over)).toEqual([]);
+  });
+
+  itFor("banking", "banking: shared school named as most important gets the most rubric points", () => {
+    const points = rubricPoints(runs.banking.rubric);
+    const shared = [...points].find(([name]) => /shared|school|alum|alma|indiana|kelley|background/.test(name))?.[1] ?? 0;
+    expect(shared, runs.banking.rubric).toBe(Math.max(...points.values()));
+  });
+
+  itFor("banking", "banking: most mentors are Indiana University / Kelley alumni", () => {
+    atLeastHalf(runs.banking.mentors, (m) => IU.test(text(m)), "IU alumni");
+  });
+
+  // ─── High school ───
+  itFor("highSchool", "high school: most mentors are students or recent grads at the target colleges", () => {
+    atLeastHalf(runs.highSchool.mentors, (m) => TARGET_COLLEGE.test(text(m)) && COLLEGE_STUDENT.test(text(m)), "target-college students");
+  });
+
+  itFor("highSchool", "high school: BME undergrads at target colleges aren't held to the student cap", () => {
+    const capped = runs.highSchool.scored.filter(
+      (s) => TARGET_COLLEGE.test(s.headline) && /biomedical|\bBME\b/i.test(s.headline) && /\b(student|undergrad)/i.test(s.headline) && !/ph\.?d/i.test(s.headline) && s.score <= 10,
+    );
+    expect(capped, describePeople(capped)).toEqual([]);
+  });
+
+  itFor("highSchool", "high school: paid admissions consultants are held down", () => {
+    const over = runs.highSchool.mentors.filter((m) => ADMISSIONS_SELLER.test(text(m)) && m.score > 10);
+    expect(over, describePeople(over)).toEqual([]);
+  });
+
+  // ─── Research at a school ───
+  itFor("research", "research: most mentors are academic researchers at the user's school", () => {
+    atLeastHalf(runs.research.mentors, (m) => UCHICAGO.test(text(m)) && ACADEMIC.test(text(m)), "UChicago researchers");
+  });
+
+  itFor("research", "research: most mentors work in the user's focus areas", () => {
+    atLeastHalf(runs.research.mentors, (m) => FOCUS.test(text(m)), "focus areas");
+  });
+
+  itFor("research", "research: nobody outside the school outscores someone at it", () => {
+    const at = runs.research.mentors.filter((m) => UCHICAGO.test(text(m)));
+    if (at.length === 0) return; // covered by the first research check
+    const lowest = Math.min(...at.map((m) => m.score));
+    const above = runs.research.mentors.filter((m) => !UCHICAGO.test(text(m)) && m.score > lowest);
+    expect(above, `not at UChicago, yet above a UChicago match (${lowest}):\n${describePeople(above)}`).toEqual([]);
+  });
+
+  itFor("research", "research: industry researchers are held down", () => {
+    const over = runs.research.mentors.filter((m) => INDUSTRY_RESEARCH.test(m.headline) && !UCHICAGO.test(m.headline) && m.score > 25);
+    expect(over, describePeople(over)).toEqual([]);
+  });
+
+  itFor("research", "research: PhD students they asked for aren't held to the student cap", () => {
+    const capped = runs.research.scored.filter((s) => /ph\.?d\.? (student|candidate)|doctoral (student|candidate)/i.test(s.headline) && UCHICAGO.test(s.headline) && s.score <= 10);
+    expect(capped, describePeople(capped)).toEqual([]);
+  });
+
+  // ─── Every persona ───
+  it("current students are capped at 10 unless the user asked for them", () => {
+    const over = Object.entries(runs)
+      .filter(([name]) => !WANTS_STUDENTS.includes(name as ScenarioName))
+      .flatMap(([, r]) => r.mentors)
       .filter((m) => isStudent(m) && m.score > 10);
     expect(over, describePeople(over)).toEqual([]);
   });

@@ -95,6 +95,55 @@ describe("scoreBatch", () => {
     expect(vi.mocked(chatJSON).mock.calls[0][1][0].content).toContain("Stage (up to 10)");
   });
 
+  it("computes the score from quoted evidence and caps, dropping points the profile doesn't show", async () => {
+    const rubric = `SCORING RUBRIC (points add up to 100)
+- Employer (up to 60): full points if they work at Stripe; about half if fintech; otherwise 0.
+- School (up to 40): full points if UChicago; about half if another Chicago school; otherwise 0.
+Caps (these override the points):
+- Recruiters, talent acquisition or HR staff, and current students: at most 10.
+- Their headline and snippet mention none of: payments, fintech: at most 30.`;
+    const context = `## RESUME (cv.pdf)\nUChicago\n\n## INTERVIEW (interview)\nfintech\n\n${rubric}`;
+    vi.mocked(chatJSON).mockResolvedValue({
+      scores: [
+        {
+          slug: "a",
+          awards: [
+            { criterion: "Employer", level: "full", quote: "Product Manager at Stripe" },
+            { criterion: "School", level: "full", quote: "Education: Harvard" }, // not on the profile
+          ],
+          caps: [{ cap: 1, applies: false }, { cap: 2, applies: false }],
+          score: 100,
+          reason: "PM at Stripe",
+        },
+      ],
+    });
+    // The profile never says payments or fintech, so the "mention none of" cap applies in code.
+    const [score] = await scoreBatch(env, context, [candidate("a")]);
+    expect(score.score).toBe(30);
+  });
+
+  it("ignores the model's verdict on a mention-none-of cap when the word is on the profile", async () => {
+    const ai = { ...candidate("a"), headline: "Engineer at Hudson River Trading", snippet: "Building Generative AI tools" };
+    const context = `## INTERVIEW (interview)\nx\n\nSCORING RUBRIC (points add up to 100)\n- Firm (up to 100): full points if HRT; about half if other; otherwise 0.\nCaps (these override the points):\n- Their headline and snippet mention none of: machine learning, AI: at most 25.`;
+    vi.mocked(chatJSON).mockResolvedValue({
+      scores: [{ slug: "a", awards: [{ criterion: "Firm", level: "full", quote: "Hudson River Trading" }], caps: [{ cap: 1, applies: true }], score: 25, reason: "HRT" }],
+    });
+    const [score] = await scoreBatch(env, context, [ai]);
+    expect(score.score).toBe(100);
+  });
+
+  it("drops the student cap when the rubric has none", async () => {
+    const student = { ...candidate("s"), headline: "Biomedical Engineering Student at Duke University" };
+    const rubric = (caps: string) =>
+      `## INTERVIEW (interview)\nx\n\nSCORING RUBRIC (points add up to 100)\n- School (up to 100): full points if Duke; about half if other; otherwise 0.\nCaps (these override the points):\n${caps}`;
+    const answer = { scores: [{ slug: "s", awards: [{ criterion: "School", level: "full", quote: "Duke University" }], caps: [], score: 100, reason: "Duke BME" }] };
+    vi.mocked(chatJSON).mockResolvedValue(answer);
+    const [capped] = await scoreBatch(env, rubric("- Recruiters, talent acquisition or HR staff, and current students: at most 10."), [student]);
+    const [welcome] = await scoreBatch(env, rubric("- Recruiters, talent acquisition or HR staff: at most 10."), [student]);
+    expect(capped.score).toBe(10);
+    expect(welcome.score).toBe(100);
+  });
+
   it("tells the model how to read evidence so job ads, students and bare company names don't score as matches", async () => {
     vi.mocked(chatJSON).mockResolvedValue({ scores: [] });
     await scoreBatch(env, "context", [candidate("a")]);

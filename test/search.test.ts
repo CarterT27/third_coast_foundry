@@ -138,6 +138,65 @@ describe("generateQueries", () => {
     expect(user).toMatch(/<documents>\n## RESUME \(cv.pdf\)\nIntern at Optiver\n<\/documents>/);
   });
 
+  it("gives school searches without a keyword one of the plan's focus words", async () => {
+    vi.mocked(chatJSON).mockResolvedValue({
+      specs: [
+        { titles: ["professor"], keywords: [], companies: [], schools: ["University of Chicago"] },
+        { titles: ["postdoc"], keywords: [], companies: [], schools: ["University of Chicago"] },
+        { titles: ["engineer"], keywords: [], companies: ["Tempus AI"], schools: [] },
+      ],
+      focusWords: ["neuroscience", "NLP", "natural language"],
+    });
+    expect(await generateQueries(env, "context")).toEqual([
+      'site:linkedin.com/in ("professor") neuroscience ("University of Chicago")',
+      'site:linkedin.com/in ("postdoc") NLP ("University of Chicago")',
+      'site:linkedin.com/in ("engineer") ("Tempus AI")',
+    ]);
+  });
+
+  it("replaces a generic focus word on school searches with a specific one from the plan", async () => {
+    vi.mocked(chatJSON).mockResolvedValue({
+      specs: [
+        { titles: ["professor"], keywords: ["computational"], companies: [], schools: ["University of Chicago"] },
+        { titles: ["postdoc"], keywords: ["neuroscience"], companies: [], schools: ["University of Chicago"] },
+        { titles: ["PhD candidate"], keywords: [], companies: [], schools: ["University of Chicago"] },
+      ],
+    });
+    expect(await generateQueries(env, "context")).toEqual([
+      'site:linkedin.com/in ("professor") neuroscience ("University of Chicago")',
+      'site:linkedin.com/in ("postdoc") neuroscience ("University of Chicago")',
+      'site:linkedin.com/in ("PhD candidate") neuroscience ("University of Chicago")',
+    ]);
+  });
+
+  it("keeps a focus word over a location next to a school", async () => {
+    vi.mocked(chatJSON).mockResolvedValue({
+      specs: [{ titles: ["postdoc"], keywords: ["neuroscience"], companies: [], schools: ["University of Chicago"], location: "Chicago" }],
+    });
+    expect(await generateQueries(env, "context")).toEqual(['site:linkedin.com/in ("postdoc") neuroscience ("University of Chicago")']);
+  });
+
+  it("falls back to a plain spec list when the full plan comes back broken", async () => {
+    vi.mocked(chatJSON)
+      .mockRejectedValueOnce(new Error("LLM returned invalid JSON"))
+      .mockResolvedValueOnce({ specs: [{ titles: ["analyst"], keywords: [], companies: ["Lazard"], schools: [] }] });
+    expect(await generateQueries(env, "context")).toEqual(['site:linkedin.com/in ("analyst") ("Lazard")']);
+    expect(chatJSON).toHaveBeenCalledTimes(2);
+  });
+
+  it("pairs the plan's skills and senior titles with its target companies", async () => {
+    vi.mocked(chatJSON).mockResolvedValue({
+      specs: [{ titles: ["quantitative researcher"], keywords: [], companies: ["Two Sigma"], schools: [] }],
+      targetCompanies: ["Two Sigma", "Citadel"],
+      skills: ["machine learning", "machine learning researcher"], // the second is a title: skipped
+      seniorTitles: [],
+    });
+    expect(await generateQueries(env, "context")).toEqual([
+      'site:linkedin.com/in ("machine learning") ("Two Sigma" OR "Citadel")',
+      'site:linkedin.com/in ("quantitative researcher") ("Two Sigma")',
+    ]);
+  });
+
   it("keeps at most two filters besides titles, preferring school and companies", async () => {
     vi.mocked(chatJSON).mockResolvedValue({
       specs: [

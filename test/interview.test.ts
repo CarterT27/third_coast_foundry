@@ -120,6 +120,35 @@ describe("summarize rubric", () => {
     expect(JSON.stringify(vi.mocked(chatJSON).mock.calls[0][1])).toContain("Frontier AI labs");
   });
 
+  it("keeps only caps grounded in the user's own requirement or exclusion words", async () => {
+    vi.mocked(chat).mockResolvedValue("summary");
+    vi.mocked(chatJSON).mockResolvedValue({
+      criteria: [{ name: "Location", points: 3, full: "they are in Houston", partial: "they are in Texas" }],
+      caps: [
+        { cap: "Their profile shows they are based outside Houston: at most 25.", userWords: "Houston ONLY" },
+        { cap: "Their profile shows they are outside New York City: at most 30.", userWords: "New York City" },
+        { cap: "They work at Palantir: at most 0.", userWords: "never Palantir" }, // not in the interview
+      ],
+    });
+    const note = await summarize(env, [
+      { role: "assistant", content: "Where?" },
+      { role: "user", content: "Houston ONLY, though New York City was nice to visit." },
+    ]);
+    expect(note).toContain("based outside Houston: at most 25.");
+    expect(note).not.toContain("New York City: at most 30");
+    expect(note).not.toContain("Palantir");
+  });
+
+  it("caps current students unless the user asked to meet them", async () => {
+    vi.mocked(chat).mockResolvedValue("summary");
+    const criteria = [{ name: "School", points: 3, full: "they study at Duke", partial: "they study BME elsewhere" }];
+    vi.mocked(chatJSON).mockResolvedValueOnce({ criteria, caps: [] }).mockResolvedValueOnce({ criteria, caps: [], wantsStudents: true });
+    expect(await summarize(env, conversation)).toMatch(/current students: at most 10/);
+    const welcoming = await summarize(env, conversation);
+    expect(welcoming).not.toMatch(/students/);
+    expect(welcoming).toMatch(/Recruiters.*at most 10/);
+  });
+
   it("asks for importance levels and exact-school matches so a shared school isn't outweighed by a city", async () => {
     vi.mocked(chat).mockResolvedValue("summary");
     vi.mocked(chatJSON).mockResolvedValue({ criteria: [], caps: [] });

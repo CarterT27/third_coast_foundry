@@ -129,9 +129,12 @@ const EDU_EMAIL = /[\w.+-]+@[\w-]+(\.[\w-]+)*\.edu\b/i;
 /** A headline that is only a place or LinkedIn's placeholder, with no Experience field. */
 const BLANK_HEADLINE = /^(?:[^|·]*,\s*)?(?:United States|Professional Profile)\s*$|\|\s*Professional Profile\s*$/i;
 
-/** Caps every rubric has, enforced here too because the model sometimes skips them. */
-function fixedCap(c: Candidate): number {
-  if (STUDENT.test(c.headline) || EDU_EMAIL.test(c.snippet)) return 10;
+/**
+ * The fixed caps, enforced here too because the model sometimes skips them. The student cap
+ * only applies when the rubric has it (it doesn't when the user asked to meet students).
+ */
+function fixedCap(c: Candidate, capsStudents: boolean): number {
+  if (capsStudents && (STUDENT.test(c.headline) || EDU_EMAIL.test(c.snippet))) return 10;
   if (!/Experience:/.test(c.snippet) && (!c.headline.trim() || BLANK_HEADLINE.test(c.headline))) return 20;
   return 100;
 }
@@ -149,10 +152,11 @@ function computeScore(raw: RawScore, rubric: ParsedRubric, c: Candidate): number
   }
   let score = [...awarded.values()].reduce((sum, p) => sum + p, 0);
   for (const { cap, applies } of raw.caps ?? []) {
-    const max = rubric.caps[cap - 1]?.max;
-    if (applies && max !== undefined) score = Math.min(score, max);
+    const rule = rubric.caps[cap - 1];
+    // "Mention none of" caps are decided below from the words themselves, not by the model.
+    if (applies && rule && rule.absent.length === 0) score = Math.min(score, rule.max);
   }
-  // "Mention none of" caps are checked here too: the model sometimes credits a title as a sign.
+  // The model misjudges these both ways (a title taken as a sign; "Generative AI" missed).
   const padded = ` ${profile} `;
   for (const cap of rubric.caps) {
     const mentioned = cap.absent.some((t) => padded.includes(` ${t} `) || padded.includes(` ${t}s `));
@@ -169,6 +173,7 @@ async function requestScores(env: Env, context: string, candidates: Candidate[])
   const { preferences, rubric, documents } = splitContext(context);
   const rubricText = rubric || DEFAULT_RUBRIC;
   const parsed = parseRubric(rubricText);
+  const capsStudents = !parsed || parsed.caps.some((c) => /current students/i.test(c.text));
   const { scores } = await chatJSON(
     env,
     [
@@ -184,14 +189,16 @@ Reading a profile:
 - Where someone works now comes only from their headline, the "Experience:" field, or a first-person statement ("I joined X", "I'm a research scientist at X"). A job ad, "we're hiring", a reshared or congratulatory post, an event write-up or a list of companies they mention is NOT evidence they work there.
 - A headline that is only a company name shows the employer but not the role. Award role points only if the snippet names their job.
 - Words like "ex-", "previously", "former" and the "Education:" field are past history: use them for shared background, not for their current employer.
-- Anyone still in school is a current student and gets the student cap: an undergraduate, a PhD student ("heading back to my PhD"), an intern, someone whose headline is their major or program at a university ("Finance & Economics @ Rice University"), or someone listing a .edu email. A graduation year in the past ("MIT '25") alone doesn't make someone a student.
+- Anyone still in school is a current student and gets the student cap: an undergraduate, a PhD student ("heading back to my PhD"), an intern, someone whose headline is their major or program at a university ("Finance & Economics @ Rice University"), or someone listing a .edu email. A graduation year in the past ("MIT '25") alone doesn't make someone a student. If the rubric has no student cap, the user wants to meet students: score them on the criteria like anyone else.
 - Take titles as written. A founder, director or recruiter is not a research engineer unless the profile says so. Seniority comes from the title: analyst, associate, engineer, researcher or trader without "senior", "lead", "head", "director", "VP", "partner" or "managing director" is not a senior leader.
 
 How to score:
 - Go through the criteria one by one and award full, about half, or 0 points using only that evidence. If the evidence isn't there, award 0 for that criterion; never assume.
+- "About half" needs the profile to show what the rubric's partial names, not something merely broader: computer science is not computational modeling, a hedge fund is not a quant trading firm, "researcher" is not NLP.
 - A criterion that asks for two things at once (e.g. "machine learning at a quant firm") earns full points only if the profile shows both. Working at a quant firm or holding a quant title doesn't show machine learning, and vice versa.
 - "awards" lists only the criteria that earned points: {"criterion" (its name exactly as in the rubric), "level" ("full" or "half"), "quote"}. The quote is copied word for word from the headline or snippet and shows the evidence, e.g. "Machine Learning Researcher at Two Sigma" or "Location: Houston". No quote, no points.
 - "caps" has one {"cap", "applies"} for every numbered cap above, e.g. {"cap": 1, "applies": false}. Check each cap on its own. A cap about something the profile shows ("based outside Houston", "title is not a senior leader") is true when the profile shows it; a cap about a missing quality ("mention none of: machine learning, …") is true whenever the headline and snippet don't show that quality. A quant title, a trading firm or a PhD is not a sign of machine learning.
+- A cap about where someone works ("works at a company", "a sell-side bank", "outside the University of Chicago") is about their current job only. Past jobs, internships and education never trigger it.
 - The "too little information" cap applies only when you can't tell their employer or their role at all.
 - "score" is the total of the awarded points after any cap: a whole number from 0 to 100.
 - A score of 90 or more needs full points on the criteria worth the most AND at least half on every other criterion. Being at the right company alone never reaches 90 when the rubric also rewards role or shared background.
@@ -224,7 +231,7 @@ ${documents || "Nothing known yet."}
     const score = parsed && s.awards ? computeScore(s, parsed, c) : s.score;
     bySlug.set(s.slug, {
       slug: s.slug,
-      score: Math.min(fixedCap(c), 100, Math.max(0, Math.round(score))),
+      score: Math.min(fixedCap(c, capsStudents), 100, Math.max(0, Math.round(score))),
       reason: s.reason.trim() || "No reason given.",
     });
   }

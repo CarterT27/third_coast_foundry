@@ -21,7 +21,8 @@ export const INTERVIEW_TOPICS = [
 /** Starts the per-user scoring rubric that summarize appends to the interview note. */
 export const RUBRIC_HEADING = "SCORING RUBRIC";
 
-/** Caps every rubric gets, whatever the user said. */
+/** Caps every rubric gets; the student part is dropped when the user asked to meet students. */
+const STAFF_CAP = "Recruiters, talent acquisition or HR staff: at most 10.";
 const FIXED_CAPS = [
   "Recruiters, talent acquisition or HR staff, and current students: at most 10.",
   "Too little information in the headline and snippet to judge: at most 20.",
@@ -156,11 +157,32 @@ const RubricSpec = z.object({
         partial: z.string(),
       }),
     ),
-  caps: z.array(z.string()),
+  // `userWords` is the user's own wording behind a cap; groundedCaps keeps a cap only if it's real.
+  caps: z.array(z.union([z.string(), z.object({ cap: z.string(), userWords: z.string() })])),
+  /** The user asked to meet current students (medical students, undergrads), so there's no student cap. */
+  wantsStudents: z.boolean().optional(),
 });
 type RubricSpec = z.infer<typeof RubricSpec>;
 
 /** Formats the rubric, scaling the model's points so they add up to exactly 100. */
+/** Words that make an answer a requirement or an exclusion rather than a preference. */
+const HARD_WORDS =
+  /\b(only|must|required?|non-negotiable|needs?|useless|avoid|not|no|never|don't|do not|nothing but|exclusively|won't|will not)\b/i;
+
+const squash = (text: string) => text.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, " ").trim();
+
+/**
+ * Keeps caps the user actually asked for: their quoted words must be in the interview and
+ * say "only", "must", "avoid", "not" and the like. A plain answer ("New York City") stays a
+ * criterion instead of becoming a cap. Plain-string caps (no quote) are kept as they are.
+ */
+function groundedCaps(caps: RubricSpec["caps"], transcript: string): string[] {
+  const said = squash(transcript);
+  return caps
+    .filter((c) => typeof c === "string" || (squash(c.userWords) && said.includes(squash(c.userWords)) && HARD_WORDS.test(c.userWords)))
+    .map((c) => (typeof c === "string" ? c : c.cap));
+}
+
 function renderRubric(spec: RubricSpec): string {
   const criteria = spec.criteria.filter((c) => Number.isFinite(c.points) && c.points > 0).slice(0, 5);
   if (criteria.length === 0) return "";
@@ -170,7 +192,8 @@ function renderRubric(spec: RubricSpec): string {
   const lines = criteria.map(
     (c, i) => `- ${c.name.trim()} (up to ${points[i]}): full points if ${c.full.trim()}; about half if ${c.partial.trim()}; otherwise 0.`,
   );
-  const caps = [...FIXED_CAPS, ...spec.caps.map((c) => c.trim()).filter(Boolean).slice(0, 5)];
+  const fixed = spec.wantsStudents ? [STAFF_CAP, ...FIXED_CAPS.slice(1)] : FIXED_CAPS;
+  const caps = [...fixed, ...spec.caps.map((c) => (typeof c === "string" ? c : c.cap).trim()).filter(Boolean).slice(0, 5)];
   return `${RUBRIC_HEADING} (points add up to 100)
 ${lines.join("\n")}
 Caps (these override the points):
@@ -204,17 +227,21 @@ Rules:
 - When the user wants two things together (e.g. machine learning applied at quant trading firms, or ML engineers with clinical training), make each part its own criterion ("Quant firm", "Machine learning"), so a profile that shows only one part earns only that part's points. Each part's criterion counts only direct evidence of that part, and its examples must not name the other part.
   Bad: full "their title or profile shows they apply machine learning (e.g. quant researcher, ML researcher)".
   Good: full "their title or snippet says machine learning, deep learning, ML or AI"; partial "their snippet mentions a related method such as statistical learning or neural networks".
+- When the user names alternatives ("computational neuroscience or NLP", "Chicago or New York"), make ONE criterion that any of them satisfies, never one criterion per alternative: nobody can match both, so splitting them halves the points for a perfect match.
+  Bad: "Computational neuroscience (up to 23)" and "NLP (up to 23)".
+  Good: "Focus area": full points if their title or snippet says computational neuroscience, natural language processing, NLP or computational linguistics.
 - Build criteria only from what the user said matters. Topics they answered with "anyone", "either", "no preference" or similar get no criterion at all, not even a small one. Every other topic with a concrete answer (a city, a role, a school) gets one, even if small.
 - The career timeline describes the user's own plans (an internship, a job search, a career switch), not the mentor, so it never becomes a criterion.
 - Use the user's exact target role for full role points. Related titles (e.g. research scientist when they asked for research engineer) go in "partial", never in "full", unless the user said they are open to them. Things the user said they are open to earn full points, not partial.
 - For shared background, full points only for the user's own schools or past employers listed in their documents, plus anything specific they named. The scorer sees those documents. A school that is merely similar, prestigious, or in the same city, region or country earns nothing, full or partial. If they asked for a shared school, the partial is "they share a past employer with the user".
 - Call them "the user", never by name or pronoun.
-- Write company names in full (Google DeepMind, not GDM). When the user gives examples or a category of company, say that similar companies count too.
-- caps: one line each, "<condition>: at most <score>.":
+- Write company names in full (Google DeepMind, not GDM). When the user gives examples or a category of company, say that similar companies count too. "Similar" means the same kind of firm (other quant trading firms for Citadel or Jane Street), and so does the partial: never a broader category like any asset manager, bank, sovereign fund or research firm.
+- caps: each {"cap": "<condition>: at most <score>.", "userWords": the user's own words that make it required or excluded, copied exactly from one of their answers (e.g. "Houston ONLY", "Avoid wealth management")}:
   - companies, paths or kinds of people the user wants to avoid ("at most 0" to "at most 10");
-  - hard requirements the user said are required, "only", "non-negotiable" or useless otherwise: the condition is the profile showing they don't meet it, e.g. "Their profile shows they are based outside Houston: at most 30." or "Their title is not a senior leader (managing director, head, partner, director): at most 40.". The cap for the requirement they said matters most is 25, below every other cap, so missing it always ranks lower than missing anything else. A cap never replaces the criterion: a requirement gets both;
-  - when the user excludes people who have only one of two things they want together (e.g. "not traditional quant who don't do ML"): "Their headline and snippet mention none of: machine learning, deep learning, ML, AI, neural networks, LLM, reinforcement learning: at most 40." Use this exact "mention none of:" form only for a skill, listing words a profile would literally contain, separated by commas; never for employers or kinds of firms.
+  - hard requirements, only when the user used words like "only", "must", "required", "non-negotiable" or said anyone else is useless. A plain answer ("New York City", "analysts or associates", "ideally M&A") is a preference: it gets a criterion, never a cap. For a hard requirement, the condition is the profile showing they don't meet it, e.g. "Their profile shows they are based outside Houston: at most 30." or "Their title is not a senior leader (managing director, head, partner, director): at most 40.". The cap for the requirement they said matters most is 25, below every other cap, so missing it always ranks lower than missing anything else. A cap never replaces the criterion: a requirement gets both;
+  - only when the user explicitly excludes people who have only one of two things they want together (e.g. "not traditional quant who don't do ML"): "Their headline and snippet mention none of: machine learning, deep learning, ML, AI, neural networks, LLM, reinforcement learning: at most 40." Use this exact "mention none of:" form only for a skill, listing words a profile would literally contain, separated by commas; never for employers or kinds of firms.
   Return an empty list if none apply.
+- wantsStudents: true only if the user asked to meet people who are still in school, e.g. a premed who wants medical students or a high schooler who wants current undergrads at the colleges they're applying to. Otherwise false: every rubric then caps current students at 10.
 - Write in English, plain text, no markdown.`,
         },
         { role: "user", content: `<interview>\n${transcript}\n</interview>` },
@@ -222,7 +249,7 @@ Rules:
       RubricSpec,
       { maxTokens: 800 },
     );
-    return renderRubric(spec);
+    return renderRubric({ ...spec, caps: groundedCaps(spec.caps, transcript) });
   } catch {
     return ""; // scoreBatch falls back to its default rubric
   }

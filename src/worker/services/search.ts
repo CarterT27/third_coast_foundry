@@ -4,7 +4,7 @@
 import { z } from "zod";
 import { type Candidate, MAX_QUERIES, XraySpec } from "../../shared/schemas";
 import type { Env } from "../env";
-import { chatJSON } from "../lib/llm";
+import { chatJSON, type LLMMessage } from "../lib/llm";
 import { SubrequestLimitError } from "../lib/subrequests";
 import { search, SearchCapacityError, type SearchResult } from "../lib/search-provider";
 import { splitContext } from "./interview";
@@ -131,23 +131,22 @@ export async function runSearch(env: Env, queries: string[], page = 0): Promise<
  */
 export async function generateQueries(env: Env, context: string): Promise<string[]> {
   const { preferences, rubric, documents } = splitContext(context);
-  const plan = await chatJSON(
-    env,
-    [
-      {
-        role: "system",
-        content: `You plan LinkedIn searches to find mentors for someone's coffee chats.
+  const messages: LLMMessage[] = [
+    {
+      role: "system",
+      content: `You plan LinkedIn searches to find mentors for someone's coffee chats.
 
 Return ${MAX_QUERIES} search specs. Each spec becomes one Google-style query restricted to LinkedIn profiles:
 - titles: 1-3 job titles (e.g. "product manager", "PM"). Only the first is searched: an OR of several quoted titles finds far fewer people than one title alone. Put the best short title first.
-- keywords: usually empty. At most 1 term that literally appears on people's profiles (e.g. fintech). Never a descriptive phrase like "frontier AI" or "early-stage": profiles don't say that, so the query finds nobody.
+- keywords: usually empty. At most 1 single word that literally appears on people's profiles (e.g. fintech, neuroscience). Never a descriptive phrase like "frontier AI" or "early-stage": profiles don't say that, so the query finds nobody.
 - companies: 0-4 real company names, OR'd together. Never a description like "Chicago startup".
 - schools: 0-2 schools, OR'd together (the user's own school finds alumni).
 - location: one city, only if the user cares about location. Just the city ("Houston"), never "Houston, Texas": profiles show "Location: Houston", so the longer form finds almost nobody.
 
 Also return:
 - targetCompanies: up to 6 companies the user is aiming for (named, or well-known ones that fit), best first.
-- skills: if they want a skill applied in a field (e.g. machine learning at quant trading firms, ML engineers with clinical training), 1-2 short words for the skill as profiles write it ("machine learning", "deep learning"); otherwise empty. Extra searches pair these with targetCompanies, because a title that combines both ("machine learning researcher") finds almost nobody.
+- skills: if they want a technique applied inside a field (e.g. machine learning at quant trading firms, ML engineers with clinical training), 1-2 names of the technique as profiles write it ("machine learning", "deep learning"); otherwise empty. Never a job title ("machine learning researcher") and never an industry or product ("power", "natural gas", "M&A"). Extra searches pair these with targetCompanies, because a title that combines both finds almost nobody.
+- focusWords: if they want people in specific research or focus areas, 1-3 single words those people's profiles contain ("neuroscience", "NLP", "linguistics"); otherwise empty. Research areas go here, not in skills. School searches without a keyword get one of these.
 - seniorTitles: if they want senior leaders, 1-3 short senior titles ("managing director", "head of", "partner"); otherwise empty. Extra searches pair these with targetCompanies.
 
 The user's interview preferences are what they want; their documents are background. When the two conflict, follow the preferences. The scoring rubric shows what matters most to them, so aim most specs at the criteria worth the most points.
@@ -159,6 +158,7 @@ Vary the angles across specs:
 - adjacent roles in the target industry, especially ones the user said they are open to
 - people who made the same career switch or took the same path
 - the target role in the preferred location
+- for research at a school: academic titles ("professor", "postdoc", "PhD student", "research assistant") with the school and one focus word as the keyword ("neuroscience", "linguistics"); these find far more people than a focus phrase. Every research spec needs a focus word: an academic title and the school alone return people from every department
 
 Rules:
 - Use only facts from the user's information. Don't invent schools, past employers or goals.
@@ -172,10 +172,10 @@ Rules:
 - Keep each spec broad enough to return results: besides titles, fill in at most 2 of keywords, companies, schools and location. Never 3 or more.
 - Skip companies or paths the user wants to avoid.
 - Every spec must be different.`,
-      },
-      {
-        role: "user",
-        content: `<preferences>
+    },
+    {
+      role: "user",
+      content: `<preferences>
 ${preferences || "No interview yet."}
 </preferences>
 
@@ -186,32 +186,58 @@ ${rubric || "None yet."}
 <documents>
 ${documents || "No documents yet."}
 </documents>`,
-      },
-    ],
-    z.object({
-      specs: z.array(XraySpec),
-      targetCompanies: z.array(z.string()).optional(),
-      skills: z.array(z.string()).optional(),
-      seniorTitles: z.array(z.string()).optional(),
-    }),
+    },
+  ];
+  const plan: SearchPlan = await chatJSON(env, messages, SearchPlan, { maxTokens: 3000 }).catch(
+    // The model sometimes breaks the JSON after a long spec list; a plain spec list still works.
+    () => chatJSON(env, messages, z.object({ specs: z.array(XraySpec) }), { maxTokens: 3000 }),
   );
   // The skill and senior-title searches are built here rather than left to the model, which
   // tends to write combined titles ("machine learning researcher") that find nobody.
   const companies = (plan.targetCompanies ?? []).filter((c) => c.trim()).slice(0, 6);
   const groups = companies.length > 3 ? [companies.slice(0, 3), companies.slice(3)] : [companies];
-  const pairWith = (titles: string[] | undefined) =>
+  const pairWith = (titles: string[]) =>
     companies.length === 0
       ? []
-      : (titles ?? [])
+      : titles
           .filter((t) => t.trim())
           .slice(0, 2)
           .flatMap((title) => groups.map((group) => ({ titles: [title], keywords: [], companies: group, schools: [] })));
-  const extra = [...pairWith(plan.skills), ...pairWith(plan.seniorTitles)].slice(0, EXTRA_QUERIES);
-  const specs = [...extra, ...plan.specs];
+  // A "skill" that is really a job title finds nobody next to the companies; skip it.
+  const skills = (plan.skills ?? []).filter((t) => !ROLE_NOUN.test(t.trim()));
+  const extra = [...pairWith(skills), ...pairWith(plan.seniorTitles ?? [])].slice(0, EXTRA_QUERIES);
+  // A school search with no focus word, or a generic one ("computational"), returns people from
+  // every department. The pool also takes the words the planner put on its other school searches.
+  const schoolOnly = (spec: XraySpec) => spec.schools.length > 0 && spec.companies.length === 0;
+  const focus = [
+    ...new Set(
+      [...(plan.focusWords ?? []), ...(plan.skills ?? []), ...plan.specs.filter(schoolOnly).flatMap((spec) => spec.keywords)]
+        .map((w) => w.trim())
+        .filter((w) => w && !/\s/.test(w) && !GENERIC_FOCUS.test(w)),
+    ),
+  ];
+  let next = 0;
+  const focused = plan.specs.map((spec) =>
+    focus.length && schoolOnly(spec) && (spec.keywords.length === 0 || GENERIC_FOCUS.test(spec.keywords[0]))
+      ? { ...spec, keywords: [focus[next++ % focus.length]] }
+      : spec,
+  );
+  const specs = [...extra, ...focused];
   const queries = [...new Set(specs.map((spec) => buildXray(narrowest(spec))))].slice(0, MAX_QUERIES);
   if (queries.length === 0) throw new Error("The LLM returned no search queries");
   return queries;
 }
+
+/** The planner's answer. The short plan fields come before the long spec list: the model
+ * sometimes garbles whatever follows that list. */
+const SearchPlan = z.object({
+  targetCompanies: z.array(z.string()).optional(),
+  skills: z.array(z.string()).optional(),
+  seniorTitles: z.array(z.string()).optional(),
+  focusWords: z.array(z.string()).optional(),
+  specs: z.array(XraySpec),
+});
+type SearchPlan = z.infer<typeof SearchPlan>;
 
 /** Filters besides titles kept per query; every extra one shrinks the results a lot. */
 const MAX_FILTERS = 2;
@@ -219,23 +245,35 @@ const MAX_FILTERS = 2;
 /** Skill × company and senior title × company searches taken from the plan, out of MAX_QUERIES. */
 const EXTRA_QUERIES = 4;
 
+/** Words too broad to narrow a school search to a field. */
+const GENERIC_FOCUS = /^(computational|research|science|sciences|data|analysis|engineering|studies|technology|systems|modeling|lab|academic|theory)$/i;
+
+/** Ends in a job title word: "machine learning researcher" is a title, not a skill. */
+const ROLE_NOUN = /\b(researchers?|engineers?|scientists?|analysts?|traders?|developers?|managers?|associates?|directors?|consultants?|specialists?)$/i;
+
 /**
  * Searches the first title only, since the search engine returns far fewer results for an OR
- * of quoted titles. Keeps the MAX_FILTERS most useful filters, in the order schools, companies, location, keywords,
+ * of quoted titles. Keeps the MAX_FILTERS most useful filters, in the order schools, companies, location, keywords
+ * (a one-word keyword before the location next to a school),
  * dropping companies next to a city when the title is more than one word.
- * A keyword is dropped next to a school or companies (titles + keyword + companies finds almost
- * nobody), and a location is cut to its city ("Houston, Texas" → "Houston"), the form profiles show.
+ * A multi-word keyword is dropped next to a school or companies (it finds almost nobody), and a
+ * location is cut to its city ("Houston, Texas" → "Houston"), the form profiles show.
  */
 function narrowest(spec: XraySpec): XraySpec {
   let left = MAX_FILTERS;
   const keep = (has: boolean) => has && left-- > 0;
   const schools = keep(spec.schools.length > 0) ? spec.schools : [];
   let companies = keep(spec.companies.length > 0) ? spec.companies : [];
+  // A one-word keyword narrows well ("PhD student" + school + neuroscience); a phrase next to a
+  // school or companies finds almost nobody. Next to a school it goes before the location, which
+  // the school mostly implies anyway.
+  const [keyword] = spec.keywords;
+  const fits = Boolean(keyword) && ((schools.length === 0 && companies.length === 0) || !/\s/.test(keyword.trim()));
+  const early = fits && schools.length > 0 && keep(true);
   const city = spec.location?.split(",")[0].trim();
   const location = keep(Boolean(city)) ? city : undefined;
   // Companies and a city together only find people with a one-word title ("trader").
   if (location && companies.length > 0 && /\s/.test(spec.titles[0]?.trim() ?? "")) companies = [];
-  const alone = schools.length === 0 && companies.length === 0;
-  const keywords = keep(alone && spec.keywords.length > 0) ? spec.keywords.slice(0, 1) : [];
+  const keywords = early || keep(fits) ? [keyword] : [];
   return { titles: spec.titles.slice(0, 1), keywords, companies, schools, location };
 }
