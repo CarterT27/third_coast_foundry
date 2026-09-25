@@ -23,6 +23,11 @@ export function App() {
   const [error, setError] = useState<string | null>(null);
   // Local only: lets the user upload several files before moving on.
   const [continued, setContinued] = useState(false);
+  // Which done step (if any) has its panel expanded for editing.
+  const [editing, setEditing] = useState<Stage | null>(null);
+  // Bumped to scroll to the interview step after "Continue", even when the stage
+  // itself doesn't change (e.g. the user came back to step 1 to add a file).
+  const [jumpToInterview, setJumpToInterview] = useState(0);
 
   const load = useCallback(
     () =>
@@ -40,6 +45,10 @@ export function App() {
     load();
   }, [load]);
 
+  useEffect(() => {
+    if (jumpToInterview > 0) document.getElementById("step-2")?.scrollIntoView({ behavior: "smooth", block: "start" });
+  }, [jumpToInterview]);
+
   const refresh = useCallback(() => void load(), [load]);
 
   if (error && !state) return <main className="app"><p className="error">{error}</p></main>;
@@ -49,6 +58,16 @@ export function App() {
   const stepState = (s: Stage): StepState => {
     const diff = STAGES.indexOf(s) - STAGES.indexOf(stage);
     return diff < 0 ? "done" : diff === 0 ? "active" : "locked";
+  };
+  const editProps = (s: Stage) => ({
+    open: editing === s,
+    onOpenChange: (open: boolean) => setEditing(open ? s : null),
+  });
+  const continueToInterview = () => {
+    setContinued(true);
+    // Collapse step 1; if the interview is already finished, reopen it so there's something to land on.
+    setEditing(state.interview.done ? "interview" : null);
+    setJumpToInterview((n) => n + 1);
   };
 
   return (
@@ -75,11 +94,12 @@ export function App() {
         title="Your background"
         state={stepState("upload")}
         summary={state.documents.map((d) => d.filename).join(" · ")}
+        {...editProps("upload")}
       >
-        <Upload documents={state.documents} onChange={refresh} onContinue={() => setContinued(true)} />
+        <Upload documents={state.documents} onChange={refresh} onContinue={continueToInterview} />
       </Step>
 
-      <Step number={2} title="Interview" state={stepState("interview")} summary="Interview complete">
+      <Step number={2} title="Interview" state={stepState("interview")} summary="Interview complete" {...editProps("interview")}>
         <Interview interview={state.interview} onChange={refresh} />
       </Step>
 

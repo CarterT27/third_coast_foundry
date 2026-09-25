@@ -1,6 +1,7 @@
 // Layout for one step of the page: locked (grayed title), active (open), or
-// done (grayed one-line summary with an Edit toggle). Scrolls into view when it
-// becomes active.
+// done (grayed one-line summary with an Edit/Close toggle). Scrolls into view when it
+// becomes active. A done step's open state is controlled by the parent so it can
+// collapse or reopen steps when the user jumps between them.
 import { Collapsible } from "@base-ui/react/collapsible";
 import { useEffect, useRef, type ReactNode } from "react";
 
@@ -11,10 +12,12 @@ type Props = {
   title: string;
   state: StepState;
   summary?: string;
+  open?: boolean; // done steps only: whether the edit panel is expanded
+  onOpenChange?: (open: boolean) => void;
   children: ReactNode;
 };
 
-export function Step({ number, title, state, summary, children }: Props) {
+export function Step({ number, title, state, summary, open = false, onOpenChange, children }: Props) {
   const ref = useRef<HTMLElement>(null);
 
   useEffect(() => {
@@ -29,11 +32,14 @@ export function Step({ number, title, state, summary, children }: Props) {
 
   if (state === "done") {
     return (
-      <Collapsible.Root render={<section ref={ref} className="step step--done" />}>
+      <Collapsible.Root render={<section ref={ref} id={`step-${number}`} className="step step--done" />}
+        open={open}
+        onOpenChange={(next) => onOpenChange?.(next)}
+      >
         <div className="step__header">
           {heading}
           {summary && <span className="step__summary">{summary}</span>}
-          <Collapsible.Trigger className="button button--ghost">Edit</Collapsible.Trigger>
+          <Collapsible.Trigger className="button button--ghost">{open ? "Close" : "Edit"}</Collapsible.Trigger>
         </div>
         <Collapsible.Panel className="step__body">{children}</Collapsible.Panel>
       </Collapsible.Root>
@@ -41,7 +47,7 @@ export function Step({ number, title, state, summary, children }: Props) {
   }
 
   return (
-    <section ref={ref} className={`step step--${state}`} aria-disabled={state === "locked"}>
+    <section ref={ref} id={`step-${number}`} className={`step step--${state}`} aria-disabled={state === "locked"}>
       <div className="step__header">{heading}</div>
       {state === "active" && <div className="step__body">{children}</div>}
     </section>
